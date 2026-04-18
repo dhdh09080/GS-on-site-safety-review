@@ -149,7 +149,7 @@ elif menu == "⚙️ 관리자 페이지":
         tab1, tab2, tab3 = st.tabs(["📝 신규 점수 입력", "🔄 기존 데이터 수정 및 삭제", "⚙️ 점수표(템플릿) 설정"])
         
         # ----------------------------------------
-        # 탭 1: 신규 점수 입력 (슬라이더 선택형 UI)
+        # 탭 1: 신규 점수 입력 (버튼 선택형 UI)
         # ----------------------------------------
         with tab1:
             st.subheader("📝 현장 세부 심사 입력")
@@ -186,17 +186,21 @@ elif menu == "⚙️ 관리자 페이지":
                                         
                                         st.markdown(f"**🔹 {row['item_name']}**{pdca_tag}{penalty_tag} (배점: {row['max_score']}점)")
                                         
-                                        c1, c2 = st.columns([3, 1])
-                                        with c2: is_na = st.checkbox(f"해당없음", key=f"new_na_{row['id']}")
+                                        c1, c2 = st.columns([5, 1]) # 버튼이 차지할 공간을 위해 비율 조정
+                                        with c2: 
+                                            is_na = st.checkbox(f"해당없음", key=f"new_na_{row['id']}")
                                         with c1: 
-                                            # 슬라이더 선택형 UI 적용 (정수만)
                                             max_val = int(row['max_score'])
-                                            score = st.select_slider(
+                                            options = list(range(max_val + 1))
+                                            # 슬라이더 대신 가로형 라디오 버튼(선택 버튼) 사용
+                                            score = st.radio(
                                                 "점수 선택",
-                                                options=list(range(max_val + 1)),
-                                                value=max_val,
+                                                options=options,
+                                                index=len(options) - 1, # 기본값은 만점으로 설정
+                                                horizontal=True,
                                                 key=f"new_score_{row['id']}",
-                                                disabled=is_na
+                                                disabled=is_na,
+                                                label_visibility="collapsed" # '점수 선택' 글씨 숨겨서 깔끔하게
                                             )
                                         
                                         input_data[row['id']] = {"score": score, "is_na": is_na, "max": row['max_score']}
@@ -222,7 +226,7 @@ elif menu == "⚙️ 관리자 페이지":
                         st.error("현장명을 입력해주세요.")
 
         # ----------------------------------------
-        # 탭 2: 기존 데이터 수정 및 삭제 (슬라이더 적용)
+        # 탭 2: 기존 데이터 수정 및 삭제 (버튼 선택형 UI)
         # ----------------------------------------
         with tab2:
             st.subheader("🔄 기존 데이터 불러오기 및 수정")
@@ -272,20 +276,27 @@ elif menu == "⚙️ 관리자 페이지":
                                             str_id = str(row['id'])
                                             existing_data = current_details.get(str_id, {"score": 0.0, "is_na": False})
                                             
-                                            # 안전장치 및 정수화
                                             max_val = int(row['max_score'])
                                             saved_score = int(float(existing_data.get("score", 0.0)))
                                             safe_score = min(saved_score, max_val)
+                                            options = list(range(max_val + 1))
                                             
-                                            c1, c2 = st.columns([3, 1])
+                                            try:
+                                                default_index = options.index(safe_score)
+                                            except ValueError:
+                                                default_index = 0
+                                            
+                                            c1, c2 = st.columns([5, 1])
                                             with c2: edit_is_na = st.checkbox(f"해당없음", value=existing_data.get("is_na", False), key=f"edit_na_{row['id']}")
                                             with c1: 
-                                                edit_score = st.select_slider(
+                                                edit_score = st.radio(
                                                     "점수 선택",
-                                                    options=list(range(max_val + 1)),
-                                                    value=safe_score,
+                                                    options=options,
+                                                    index=default_index,
+                                                    horizontal=True,
                                                     key=f"edit_score_{row['id']}",
-                                                    disabled=edit_is_na
+                                                    disabled=edit_is_na,
+                                                    label_visibility="collapsed"
                                                 )
                                             
                                             edit_input_data[row['id']] = {"score": edit_score, "is_na": edit_is_na, "max": row['max_score']}
@@ -317,7 +328,7 @@ elif menu == "⚙️ 관리자 페이지":
                 st.info("수정할 데이터가 없습니다.")
 
         # ----------------------------------------
-        # 탭 3: 점수표(템플릿) 설정 (생략 없음)
+        # 탭 3: 점수표(템플릿) 설정
         # ----------------------------------------
         with tab3:
             st.subheader("📥 엑셀 파일로 점수표 일괄 업로드")
@@ -339,7 +350,7 @@ elif menu == "⚙️ 관리자 페이지":
                                     "pdca": str(row['PDCA']) if pd.notna(row['PDCA']) else "",
                                     "item_name": str(row['점검사항']),
                                     "penalty": str(row['과태료']) if pd.notna(row['과태료']) else "",
-                                    "max_score": int(row['배점']) # 배점도 정수화
+                                    "max_score": int(row['배점'])
                                 })
                             
                             supabase.table("checklist_template").delete().gt("id", 0).execute()
