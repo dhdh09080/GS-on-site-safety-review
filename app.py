@@ -21,10 +21,16 @@ except Exception as e:
     st.error("데이터베이스 연결에 실패했습니다. Streamlit Secrets 설정을 확인해주세요.")
     st.stop()
 
+# 2. 세션 상태 초기화 (페이지 전환용 State 추가)
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
 if 'current_user' not in st.session_state:
     st.session_state.current_user = ""
+# UI 흐름 제어를 위한 상태 변수 ('list', 'create', 'edit')
+if 'admin_view' not in st.session_state:
+    st.session_state.admin_view = "list"
+if 'edit_target_id' not in st.session_state:
+    st.session_state.edit_target_id = None
 
 def load_template():
     res = supabase.table("checklist_template").select("*").order("id").execute()
@@ -57,7 +63,7 @@ st.sidebar.title("메뉴 네비게이션")
 menu = st.sidebar.radio("이동할 페이지 선택:", ["📊 실시간 대시보드", "⚙️ 관리자 페이지"])
 
 # ==========================================
-# [페이지 1] 실시간 대시보드
+# [페이지 1] 실시간 대시보드 (변경 없음)
 # ==========================================
 if menu == "📊 실시간 대시보드":
     st.title("🏗️ 현장 내부심사 통합 대시보드")
@@ -112,9 +118,9 @@ if menu == "📊 실시간 대시보드":
 # [페이지 2] 관리자 페이지
 # ==========================================
 elif menu == "⚙️ 관리자 페이지":
-    st.title("⚙️ 관리자 시스템")
     
     if not st.session_state.logged_in:
+        st.title("⚙️ 관리자 시스템 접속")
         with st.form("login_form"):
             st.subheader("관리자 로그인")
             user_id = st.text_input("아이디")
@@ -138,129 +144,90 @@ elif menu == "⚙️ 관리자 페이지":
                     else:
                         st.error("설정된 접속 계정 정보를 확인해주세요.")
     else:
-        st.success(f"🔓 '{st.session_state.current_user}' 관리자님, 환영합니다.")
-        if st.button("로그아웃"):
-            st.session_state.logged_in = False
-            st.session_state.current_user = ""
-            st.rerun()
-            
+        # 로그인 성공 후 화면 레이아웃
+        col_title, col_logout = st.columns([5, 1])
+        with col_title:
+            st.title("⚙️ 현장 내부심사 관리")
+        with col_logout:
+            st.write(f"👤 **{st.session_state.current_user}**님")
+            if st.button("로그아웃"):
+                st.session_state.logged_in = False
+                st.session_state.current_user = ""
+                st.session_state.admin_view = "list"
+                st.rerun()
+                
         st.divider()
         
-        tab1, tab2, tab3 = st.tabs(["📝 신규 점수 입력", "🔄 기존 데이터 수정 및 삭제", "⚙️ 점수표(템플릿) 설정"])
+        # 메인 관리 탭과 템플릿 설정 탭 분리
+        main_tab, template_tab = st.tabs(["📝 현장 심사 관리", "⚙️ 점수표(템플릿) 설정"])
         
-        # ----------------------------------------
-        # 탭 1: 신규 점수 입력 (버튼 선택형 UI)
-        # ----------------------------------------
-        with tab1:
-            st.subheader("📝 현장 세부 심사 입력")
-            template_df = load_template()
-            
-            with st.form("detail_input_form", clear_on_submit=True):
-                col1, col2 = st.columns(2)
-                with col1: site_name = st.text_input("현장명")
-                with col2: site_type = st.selectbox("현장 분류", ["건축", "인프라", "플랜트"])
+        with main_tab:
+            # ---------------------------------------------------------
+            # 뷰 모드 1: 리스트 (대장님 제안 UX)
+            # ---------------------------------------------------------
+            if st.session_state.admin_view == "list":
+                col_sub, col_btn = st.columns([4, 1])
+                with col_sub:
+                    st.subheader("📋 등록된 현장 목록")
+                with col_btn:
+                    if st.button("➕ 신규 현장 등록", type="primary", use_container_width=True):
+                        st.session_state.admin_view = "create"
+                        st.rerun()
                 
-                st.write("---")
-                
-                input_tabs = st.tabs(main_categories)
-                input_data = {}
-                
-                if not template_df.empty and 'category' in template_df.columns:
-                    template_df = template_df.fillna("") 
+                res_df = load_results()
+                if not res_df.empty:
+                    # 표출용 데이터프레임 가공
+                    display_df = res_df[['id', '현장명', '현장타입', '최종점수', 'updated_at', 'updated_by']].copy()
+                    display_df['updated_at'] = display_df['updated_at'].str[:10] # 날짜만 표시
+                    display_df.columns = ['ID', '현장명', '타입', '최종점수', '최근수정일', '수정자']
                     
-                    for i, category in enumerate(main_categories):
-                        with input_tabs[i]:
-                            filtered_df = template_df[template_df['category'] == category]
-                            if filtered_df.empty:
-                                st.info("등록된 평가 항목이 없습니다.")
-                            else:
-                                sub_cats = filtered_df['sub_category'].unique()
-                                for sub_cat in sub_cats:
-                                    if sub_cat.strip() != "":
-                                        st.markdown(f"##### 📌 {sub_cat}")
-                                    
-                                    sub_df = filtered_df[filtered_df['sub_category'] == sub_cat]
-                                    for index, row in sub_df.iterrows():
-                                        pdca_tag = f" `[{row['pdca']}]`" if row['pdca'] != "" else ""
-                                        penalty_tag = f" 🚨**(과태료: {row['penalty']})**" if row['penalty'] != "" else ""
-                                        
-                                        st.markdown(f"**🔹 {row['item_name']}**{pdca_tag}{penalty_tag} (배점: {row['max_score']}점)")
-                                        
-                                        c1, c2 = st.columns([5, 1]) # 버튼이 차지할 공간을 위해 비율 조정
-                                        with c2: 
-                                            is_na = st.checkbox(f"해당없음", key=f"new_na_{row['id']}")
-                                        with c1: 
-                                            max_val = int(row['max_score'])
-                                            options = list(range(max_val + 1))
-                                            # 슬라이더 대신 가로형 라디오 버튼(선택 버튼) 사용
-                                            score = st.radio(
-                                                "점수 선택",
-                                                options=options,
-                                                index=len(options) - 1, # 기본값은 만점으로 설정
-                                                horizontal=True,
-                                                key=f"new_score_{row['id']}",
-                                                disabled=is_na,
-                                                label_visibility="collapsed" # '점수 선택' 글씨 숨겨서 깔끔하게
-                                            )
-                                        
-                                        input_data[row['id']] = {"score": score, "is_na": is_na, "max": row['max_score']}
-                                        st.write("---")
-
-                st.write("") 
-                if st.form_submit_button("✅ 전체 데이터 최종 저장", use_container_width=True):
-                    if site_name:
-                        total_score_earned = sum([d["score"] for d in input_data.values() if not d["is_na"]])
-                        total_max_possible = sum([d["max"] for d in input_data.values() if not d["is_na"]])
-                        final_score = round((total_score_earned / total_max_possible * 100) if total_max_possible > 0 else 0, 1)
-
-                        supabase.table("audit_results").insert({
-                            "site_name": site_name, 
-                            "site_type": site_type, 
-                            "score": final_score, 
-                            "details": json.dumps(input_data),
-                            "created_by": st.session_state.current_user,
-                            "updated_by": st.session_state.current_user
-                        }).execute()
-                        st.success(f"'{site_name}' 데이터가 저장되었습니다! (최종 점수: {final_score}점)")
-                    else:
-                        st.error("현장명을 입력해주세요.")
-
-        # ----------------------------------------
-        # 탭 2: 기존 데이터 수정 및 삭제 (버튼 선택형 UI)
-        # ----------------------------------------
-        with tab2:
-            st.subheader("🔄 기존 데이터 불러오기 및 수정")
-            
-            res_df = load_results()
-            if not res_df.empty:
-                res_df['표시명'] = res_df['현장명'] + " [" + res_df['현장타입'] + "] (" + res_df['created_at'].str[:10] + ")"
-                selected_display = st.selectbox("수정/삭제할 현장 데이터를 선택하세요:", res_df['표시명'].tolist())
-                
-                if selected_display:
-                    selected_row = res_df[res_df['표시명'] == selected_display].iloc[0]
-                    target_id = int(selected_row['id'])
-                    current_details = json.loads(selected_row['details']) if pd.notna(selected_row['details']) else {}
+                    st.dataframe(display_df, use_container_width=True, hide_index=True)
                     
                     st.write("---")
+                    st.write("💡 **수정/삭제를 원하시는 현장을 아래에서 선택해주세요.**")
                     
-                    with st.form("edit_form"):
-                        col1, col2 = st.columns(2)
-                        with col1: edit_site_name = st.text_input("현장명 수정", value=selected_row['현장명'])
-                        with col2: 
-                            type_list = ["건축", "인프라", "플랜트"]
-                            type_idx = type_list.index(selected_row['현장타입']) if selected_row['현장타입'] in type_list else 0
-                            edit_site_type = st.selectbox("현장 분류 수정", type_list, index=type_idx)
+                    # 수정할 현장 선택
+                    res_df['표시명'] = res_df['현장명'] + " [" + res_df['현장타입'] + "] (" + res_df['created_at'].str[:10] + ")"
+                    selected_display = st.selectbox("수정할 현장 선택:", ["선택 안함"] + res_df['표시명'].tolist())
+                    
+                    if selected_display != "선택 안함":
+                        selected_row = res_df[res_df['표시명'] == selected_display].iloc[0]
+                        if st.button(f"✏️ '{selected_row['현장명']}' 심사내역 수정하기"):
+                            st.session_state.edit_target_id = int(selected_row['id'])
+                            st.session_state.admin_view = "edit"
+                            st.rerun()
+                else:
+                    st.info("등록된 현장 심사 데이터가 없습니다. 우측 상단의 '신규 현장 등록' 버튼을 눌러주세요.")
+
+            # ---------------------------------------------------------
+            # 뷰 모드 2: 신규 생성 (Create)
+            # ---------------------------------------------------------
+            elif st.session_state.admin_view == "create":
+                if st.button("⬅️ 목록으로 돌아가기"):
+                    st.session_state.admin_view = "list"
+                    st.rerun()
+                    
+                st.subheader("📝 신규 현장 세부 심사 입력")
+                template_df = load_template()
+                
+                with st.form("detail_input_form", clear_on_submit=False):
+                    col1, col2 = st.columns(2)
+                    with col1: site_name = st.text_input("현장명")
+                    with col2: site_type = st.selectbox("현장 분류", ["건축", "인프라", "플랜트"])
+                    
+                    st.write("---")
+                    input_tabs = st.tabs(main_categories)
+                    input_data = {}
+                    
+                    if not template_df.empty and 'category' in template_df.columns:
+                        template_df = template_df.fillna("") 
                         
-                        st.markdown("#### 📋 세부 항목 수정")
-                        template_df = load_template()
-                        edit_input_data = {}
-                        
-                        if not template_df.empty and 'category' in template_df.columns:
-                            template_df = template_df.fillna("")
-                            edit_tabs = st.tabs(main_categories)
-                            for i, category in enumerate(main_categories):
-                                with edit_tabs[i]:
-                                    filtered_df = template_df[template_df['category'] == category]
+                        for i, category in enumerate(main_categories):
+                            with input_tabs[i]:
+                                filtered_df = template_df[template_df['category'] == category]
+                                if filtered_df.empty:
+                                    st.info("등록된 평가 항목이 없습니다.")
+                                else:
                                     sub_cats = filtered_df['sub_category'].unique()
                                     for sub_cat in sub_cats:
                                         if sub_cat.strip() != "":
@@ -273,64 +240,140 @@ elif menu == "⚙️ 관리자 페이지":
                                             
                                             st.markdown(f"**🔹 {row['item_name']}**{pdca_tag}{penalty_tag} (배점: {row['max_score']}점)")
                                             
-                                            str_id = str(row['id'])
-                                            existing_data = current_details.get(str_id, {"score": 0.0, "is_na": False})
-                                            
-                                            max_val = int(row['max_score'])
-                                            saved_score = int(float(existing_data.get("score", 0.0)))
-                                            safe_score = min(saved_score, max_val)
-                                            options = list(range(max_val + 1))
-                                            
-                                            try:
-                                                default_index = options.index(safe_score)
-                                            except ValueError:
-                                                default_index = 0
-                                            
                                             c1, c2 = st.columns([5, 1])
-                                            with c2: edit_is_na = st.checkbox(f"해당없음", value=existing_data.get("is_na", False), key=f"edit_na_{row['id']}")
+                                            with c2: is_na = st.checkbox(f"해당없음", key=f"new_na_{row['id']}")
                                             with c1: 
-                                                edit_score = st.radio(
-                                                    "점수 선택",
-                                                    options=options,
-                                                    index=default_index,
-                                                    horizontal=True,
-                                                    key=f"edit_score_{row['id']}",
-                                                    disabled=edit_is_na,
-                                                    label_visibility="collapsed"
-                                                )
+                                                max_val = int(row['max_score'])
+                                                options = list(range(max_val + 1))
+                                                score = st.radio("점수", options=options, index=len(options)-1, horizontal=True, key=f"new_score_{row['id']}", disabled=is_na, label_visibility="collapsed")
                                             
-                                            edit_input_data[row['id']] = {"score": edit_score, "is_na": edit_is_na, "max": row['max_score']}
+                                            input_data[row['id']] = {"score": score, "is_na": is_na, "max": row['max_score']}
                                             st.write("---")
-                        
-                        submit_col, del_col = st.columns([3, 1])
-                        with submit_col:
-                            if st.form_submit_button("💾 수정한 내용으로 업데이트", use_container_width=True):
-                                total_score_earned = sum([d["score"] for d in edit_input_data.values() if not d["is_na"]])
-                                total_max_possible = sum([d["max"] for d in edit_input_data.values() if not d["is_na"]])
-                                final_score = round((total_score_earned / total_max_possible * 100) if total_max_possible > 0 else 0, 1)
 
-                                supabase.table("audit_results").update({
-                                    "site_name": edit_site_name,
-                                    "site_type": edit_site_type,
-                                    "score": final_score,
-                                    "details": json.dumps(edit_input_data),
-                                    "updated_by": st.session_state.current_user,
-                                    "updated_at": datetime.utcnow().isoformat()
-                                }).eq("id", target_id).execute()
-                                
-                                st.success(f"성공적으로 업데이트되었습니다! (수정된 점수: {final_score}점)")
+                    st.write("") 
+                    if st.form_submit_button("✅ 전체 데이터 최종 저장", use_container_width=True):
+                        if site_name:
+                            total_score_earned = sum([d["score"] for d in input_data.values() if not d["is_na"]])
+                            total_max_possible = sum([d["max"] for d in input_data.values() if not d["is_na"]])
+                            final_score = round((total_score_earned / total_max_possible * 100) if total_max_possible > 0 else 0, 1)
 
-                        with del_col:
-                            if st.form_submit_button("🚨 이 데이터 삭제", use_container_width=True):
-                                supabase.table("audit_results").delete().eq("id", target_id).execute()
-                                st.error("데이터가 완전히 삭제되었습니다.")
-            else:
-                st.info("수정할 데이터가 없습니다.")
+                            supabase.table("audit_results").insert({
+                                "site_name": site_name, 
+                                "site_type": site_type, 
+                                "score": final_score, 
+                                "details": json.dumps(input_data),
+                                "created_by": st.session_state.current_user,
+                                "updated_by": st.session_state.current_user
+                            }).execute()
+                            
+                            st.success(f"'{site_name}' 데이터가 저장되었습니다! (최종 점수: {final_score}점)")
+                            # 저장 후 목록으로 강제 이동
+                            st.session_state.admin_view = "list"
+                            st.rerun()
+                        else:
+                            st.error("현장명을 입력해주세요.")
 
-        # ----------------------------------------
-        # 탭 3: 점수표(템플릿) 설정
-        # ----------------------------------------
-        with tab3:
+            # ---------------------------------------------------------
+            # 뷰 모드 3: 기존 데이터 수정 (Edit)
+            # ---------------------------------------------------------
+            elif st.session_state.admin_view == "edit" and st.session_state.edit_target_id is not None:
+                if st.button("⬅️ 목록으로 돌아가기"):
+                    st.session_state.admin_view = "list"
+                    st.session_state.edit_target_id = None
+                    st.rerun()
+                
+                target_id = st.session_state.edit_target_id
+                res_df = load_results()
+                selected_row = res_df[res_df['id'] == target_id].iloc[0]
+                current_details = json.loads(selected_row['details']) if pd.notna(selected_row['details']) else {}
+                
+                st.subheader(f"🔄 '{selected_row['현장명']}' 심사 수정")
+                st.write("---")
+                
+                with st.form("edit_form"):
+                    col1, col2 = st.columns(2)
+                    with col1: edit_site_name = st.text_input("현장명 수정", value=selected_row['현장명'])
+                    with col2: 
+                        type_list = ["건축", "인프라", "플랜트"]
+                        type_idx = type_list.index(selected_row['현장타입']) if selected_row['현장타입'] in type_list else 0
+                        edit_site_type = st.selectbox("현장 분류 수정", type_list, index=type_idx)
+                    
+                    st.markdown("#### 📋 세부 항목 수정")
+                    template_df = load_template()
+                    edit_input_data = {}
+                    
+                    if not template_df.empty and 'category' in template_df.columns:
+                        template_df = template_df.fillna("")
+                        edit_tabs = st.tabs(main_categories)
+                        for i, category in enumerate(main_categories):
+                            with edit_tabs[i]:
+                                filtered_df = template_df[template_df['category'] == category]
+                                sub_cats = filtered_df['sub_category'].unique()
+                                for sub_cat in sub_cats:
+                                    if sub_cat.strip() != "":
+                                        st.markdown(f"##### 📌 {sub_cat}")
+                                    
+                                    sub_df = filtered_df[filtered_df['sub_category'] == sub_cat]
+                                    for index, row in sub_df.iterrows():
+                                        pdca_tag = f" `[{row['pdca']}]`" if row['pdca'] != "" else ""
+                                        penalty_tag = f" 🚨**(과태료: {row['penalty']})**" if row['penalty'] != "" else ""
+                                        
+                                        st.markdown(f"**🔹 {row['item_name']}**{pdca_tag}{penalty_tag} (배점: {row['max_score']}점)")
+                                        
+                                        str_id = str(row['id'])
+                                        existing_data = current_details.get(str_id, {"score": 0.0, "is_na": False})
+                                        
+                                        max_val = int(row['max_score'])
+                                        saved_score = int(float(existing_data.get("score", 0.0)))
+                                        safe_score = min(saved_score, max_val)
+                                        options = list(range(max_val + 1))
+                                        
+                                        try:
+                                            default_index = options.index(safe_score)
+                                        except ValueError:
+                                            default_index = 0
+                                        
+                                        c1, c2 = st.columns([5, 1])
+                                        with c2: edit_is_na = st.checkbox(f"해당없음", value=existing_data.get("is_na", False), key=f"edit_na_{row['id']}")
+                                        with c1: 
+                                            edit_score = st.radio("점수", options=options, index=default_index, horizontal=True, key=f"edit_score_{row['id']}", disabled=edit_is_na, label_visibility="collapsed")
+                                        
+                                        edit_input_data[row['id']] = {"score": edit_score, "is_na": edit_is_na, "max": row['max_score']}
+                                        st.write("---")
+                    
+                    submit_col, del_col = st.columns([3, 1])
+                    with submit_col:
+                        if st.form_submit_button("💾 수정한 내용으로 업데이트", use_container_width=True):
+                            total_score_earned = sum([d["score"] for d in edit_input_data.values() if not d["is_na"]])
+                            total_max_possible = sum([d["max"] for d in edit_input_data.values() if not d["is_na"]])
+                            final_score = round((total_score_earned / total_max_possible * 100) if total_max_possible > 0 else 0, 1)
+
+                            supabase.table("audit_results").update({
+                                "site_name": edit_site_name,
+                                "site_type": edit_site_type,
+                                "score": final_score,
+                                "details": json.dumps(edit_input_data),
+                                "updated_by": st.session_state.current_user,
+                                "updated_at": datetime.utcnow().isoformat()
+                            }).eq("id", target_id).execute()
+                            
+                            st.success(f"성공적으로 업데이트되었습니다!")
+                            st.session_state.admin_view = "list"
+                            st.session_state.edit_target_id = None
+                            st.rerun()
+
+                    with del_col:
+                        if st.form_submit_button("🚨 이 데이터 삭제", use_container_width=True):
+                            supabase.table("audit_results").delete().eq("id", target_id).execute()
+                            st.error("데이터가 완전히 삭제되었습니다.")
+                            st.session_state.admin_view = "list"
+                            st.session_state.edit_target_id = None
+                            st.rerun()
+
+        # ---------------------------------------------------------
+        # 분리된 템플릿 탭 (가끔 쓰는 기능)
+        # ---------------------------------------------------------
+        with template_tab:
             st.subheader("📥 엑셀 파일로 점수표 일괄 업로드")
             uploaded_file = st.file_uploader("엑셀 파일(.xlsx)을 업로드해주세요.", type=['xlsx'])
             
