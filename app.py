@@ -63,7 +63,7 @@ st.sidebar.title("메뉴 네비게이션")
 menu = st.sidebar.radio("이동할 페이지 선택:", ["📊 실시간 대시보드", "⚙️ 관리자 페이지"])
 
 # ==========================================
-# [페이지 1] 실시간 대시보드 (변경 없음)
+# [페이지 1] 실시간 대시보드
 # ==========================================
 if menu == "📊 실시간 대시보드":
     st.title("🏗️ 현장 내부심사 통합 대시보드")
@@ -163,7 +163,7 @@ elif menu == "⚙️ 관리자 페이지":
         
         with main_tab:
             # ---------------------------------------------------------
-            # 뷰 모드 1: 리스트 (대장님 제안 UX)
+            # 뷰 모드 1: 리스트 (대장님 제안 UX + KeyError 방어코드 적용)
             # ---------------------------------------------------------
             if st.session_state.admin_view == "list":
                 col_sub, col_btn = st.columns([4, 1])
@@ -176,9 +176,15 @@ elif menu == "⚙️ 관리자 페이지":
                 
                 res_df = load_results()
                 if not res_df.empty:
+                    # [KeyError 방어코드] 옛날 데이터라 수정일 칸이 없으면 생성해 줌
+                    if 'updated_at' not in res_df.columns:
+                        res_df['updated_at'] = "-"
+                    if 'updated_by' not in res_df.columns:
+                        res_df['updated_by'] = "-"
+                        
                     # 표출용 데이터프레임 가공
                     display_df = res_df[['id', '현장명', '현장타입', '최종점수', 'updated_at', 'updated_by']].copy()
-                    display_df['updated_at'] = display_df['updated_at'].str[:10] # 날짜만 표시
+                    display_df['updated_at'] = display_df['updated_at'].astype(str).str[:10] # 날짜만 표시
                     display_df.columns = ['ID', '현장명', '타입', '최종점수', '최근수정일', '수정자']
                     
                     st.dataframe(display_df, use_container_width=True, hide_index=True)
@@ -267,7 +273,6 @@ elif menu == "⚙️ 관리자 페이지":
                             }).execute()
                             
                             st.success(f"'{site_name}' 데이터가 저장되었습니다! (최종 점수: {final_score}점)")
-                            # 저장 후 목록으로 강제 이동
                             st.session_state.admin_view = "list"
                             st.rerun()
                         else:
