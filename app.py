@@ -7,57 +7,66 @@ import math
 from datetime import datetime
 from supabase import create_client, Client
 
-# 1. 페이지 설정 및 디자인 (CSS)
+# 1. 페이지 설정 및 디자인 (CSS 최적화)
 st.set_page_config(page_title="GS건설 현장 내부심사 시스템", layout="wide")
 
 st.markdown("""
     <style>
-    /* 메인 배경색 및 글꼴 */
+    /* 메인 배경색 */
     .main { background-color: #f8f9fa; }
     
-    /* 게시판 헤더 스타일 */
+    /* 게시판 헤더 스타일 (여백 추가) */
     .board-header {
         background-color: #495057;
         color: white;
-        padding: 12px 0;
-        border-radius: 8px 8px 0 0;
+        padding: 15px 0;
+        border-radius: 8px;
         font-weight: bold;
         text-align: center;
         display: flex;
-        margin-top: 20px;
+        margin-top: 25px;
+        margin-bottom: 15px; /* 헤더와 본문 사이 띄우기 */
     }
     
-    /* 게시판 행 스타일 */
+    /* 게시판 행 스타일 (여백 및 간격 대폭 확대) */
     .board-row {
         background-color: white;
-        border-bottom: 1px solid #dee2e6;
-        padding: 10px 0;
+        border: 1px solid #eee;
+        border-radius: 10px;
+        padding: 18px 0; /* 위아래 여백 확대 */
+        margin-bottom: 12px; /* 행과 행 사이 간격 추가 */
         display: flex;
         align-items: center;
         transition: all 0.2s;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.02);
     }
-    .board-row:hover { background-color: #f1f8ff; }
+    .board-row:hover { 
+        background-color: #f1f8ff; 
+        border-color: #007bff;
+        transform: translateY(-1px);
+    }
 
     /* 점수 뱃지 스타일 */
     .badge {
-        padding: 5px 12px;
+        padding: 6px 14px;
         border-radius: 20px;
         font-weight: bold;
-        font-size: 0.85rem;
+        font-size: 0.9rem;
     }
     .excellent { background-color: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
     .normal { background-color: #fff3cd; color: #856404; border: 1px solid #ffeeba; }
     .warning { background-color: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
     
-    /* 텍스트 가독성 */
-    .sub-text { color: #6c757d; font-size: 0.8rem; line-height: 1.2; }
-    .site-name-btn button {
-        font-weight: 600 !important;
-        color: #007bff !important;
-        text-align: left !important;
-        border: none !important;
-        background: none !important;
-        padding: 0 !important;
+    /* 텍스트 가독성 (간격 조정) */
+    .sub-text { 
+        color: #6c757d; 
+        font-size: 0.85rem; 
+        line-height: 1.4; /* 줄 간격 확대 */
+    }
+    
+    /* 제목 버튼 좌측 여백 추가 */
+    .stButton > button {
+        margin-left: 10px;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -124,7 +133,7 @@ if menu == "📊 통계 대시보드":
         st.info("데이터가 없습니다.")
 
 # ==========================================
-# [페이지 2] 심사 게시판 (핵심)
+# [페이지 2] 심사 게시판 (여백 개선 버전)
 # ==========================================
 elif menu == "📅 심사 게시판":
     if not st.session_state.logged_in:
@@ -140,7 +149,6 @@ elif menu == "📅 심사 게시판":
                     st.rerun()
                 else: st.error("정보가 일치하지 않습니다.")
     else:
-        # 로그인 성공 후 헤더
         head_c, user_c = st.columns([5, 1])
         with head_c: st.title("📋 현장 내부심사 게시판")
         with user_c:
@@ -153,9 +161,6 @@ elif menu == "📅 심사 게시판":
         m_tab, t_tab = st.tabs(["📝 심사 목록 관리", "⚙️ 점수표(템플릿) 설정"])
 
         with m_tab:
-            # ---------------------------------------------------------
-            # 1. 목록 보기 (대장님 요청 5열 레이아웃)
-            # ---------------------------------------------------------
             if st.session_state.admin_view == "list":
                 col_search, col_add = st.columns([3, 1])
                 with col_search:
@@ -169,7 +174,7 @@ elif menu == "📅 심사 게시판":
                 if not res_df.empty:
                     if sq: res_df = res_df[res_df['현장명'].str.contains(sq)]
                     
-                    # 게시판 헤더 가이드
+                    # 게시판 헤더
                     st.markdown("""
                         <div class='board-header'>
                             <div style='flex: 3;'>현장 제목</div>
@@ -186,29 +191,30 @@ elif menu == "📅 심사 게시판":
                         elif score >= 80: b_c, b_t = "normal", "보통"
                         else: b_c, b_t = "warning", "주의"
 
-                        # 커스텀 행 시작
+                        # 행(Row) 출력
                         with st.container():
                             r1, r2, r3, r4, r5 = st.columns([3, 1, 1.5, 1.5, 1.2])
                             
-                            # 1. 제목 (클릭 시 수정)
+                            # 1. 제목 (안쪽 여백을 위해 스타일 유지)
                             if r1.button(f"🏢 {row['현장명']}", key=f"t_{row['id']}", use_container_width=True):
                                 st.session_state.edit_target_id = int(row['id'])
                                 st.session_state.admin_view = "edit"
                                 st.rerun()
                             
-                            # 2. 분류
-                            r2.markdown(f"<div style='text-align:center; padding-top:10px;'>{row['현장타입']}</div>", unsafe_allow_html=True)
+                            # 2. 분류 (중앙 정렬 및 간격)
+                            r2.markdown(f"<div style='text-align:center; padding-top:12px;'>{row['현장타입']}</div>", unsafe_allow_html=True)
                             
-                            # 3. 점수 뱃지
-                            r3.markdown(f"<div style='text-align:center; padding-top:5px;'><span class='badge {b_c}'>{score}점 ({b_t})</span></div>", unsafe_allow_html=True)
+                            # 3. 점수 뱃지 (수직 중앙 정렬)
+                            r3.markdown(f"<div style='text-align:center; padding-top:8px;'><span class='badge {b_c}'>{score}점 ({b_t})</span></div>", unsafe_allow_html=True)
                             
                             # 4. 작성 정보
                             u_by = row.get('updated_by', '알수없음')
                             r4.markdown(f"<div style='text-align:center;' class='sub-text'>{u_by}<br>{str(row['created_at'])[:10]}</div>", unsafe_allow_html=True)
                             
-                            # 5. 관리 버튼 (수정/삭제)
+                            # 5. 관리 버튼
                             with r5:
                                 edit_c, del_c = st.columns(2)
+                                st.markdown("<div style='padding-top:4px;'>", unsafe_allow_html=True)
                                 if edit_c.button("✏️", key=f"e_{row['id']}", help="수정"):
                                     st.session_state.edit_target_id = int(row['id'])
                                     st.session_state.admin_view = "edit"
@@ -217,12 +223,14 @@ elif menu == "📅 심사 게시판":
                                     supabase.table("audit_results").delete().eq("id", row['id']).execute()
                                     st.success("삭제되었습니다.")
                                     st.rerun()
-                            st.markdown("<div style='border-bottom: 1px solid #eee;'></div>", unsafe_allow_html=True)
+                                st.markdown("</div>", unsafe_allow_html=True)
+                            
+                            # 행 사이 시각적 구분을 위한 여백 처리 (CSS margin-bottom으로 이미 처리됨)
                 else:
                     st.info("내역이 없습니다.")
 
             # ---------------------------------------------------------
-            # 2. 신규 등록 및 수정 폼 (공통 로직)
+            # 생성 및 수정 폼
             # ---------------------------------------------------------
             elif st.session_state.admin_view in ["create", "edit"]:
                 if st.button("⬅️ 목록으로 돌아가기"):
@@ -230,7 +238,6 @@ elif menu == "📅 심사 게시판":
                     st.session_state.edit_target_id = None
                     st.rerun()
                 
-                # 수정 시 데이터 불러오기
                 is_edit = (st.session_state.admin_view == "edit")
                 current_data = {}
                 s_name, s_type = "", "건축"
@@ -263,7 +270,6 @@ elif menu == "📅 심사 게시판":
                                     st.markdown(f"**🔹 {t_row['item_name']}**")
                                     if t_row['penalty']: st.markdown(f":red[*(과태료: {t_row['penalty']})*]")
                                     
-                                    # 기존 데이터 매칭
                                     prev = current_data.get(str(t_row['id']), {"score": int(t_row['max_score']), "is_na": False})
                                     
                                     c1, c2 = st.columns([5, 1])
@@ -271,7 +277,6 @@ elif menu == "📅 심사 게시판":
                                     with c1:
                                         m_score = int(t_row['max_score'])
                                         opts = list(range(m_score + 1))
-                                        # 안전한 인덱스 설정
                                         def_idx = opts.index(min(int(prev['score']), m_score)) if int(prev['score']) in opts else len(opts)-1
                                         score_val = st.radio("점수 선택", options=opts, index=def_idx, horizontal=True, key=f"sc_{t_row['id']}", disabled=na_val, label_visibility="collapsed")
                                     
@@ -282,54 +287,4 @@ elif menu == "📅 심사 게시판":
                         if not site_name:
                             st.error("현장명을 입력해주세요.")
                         else:
-                            total_earned = sum([d['score'] for d in input_results.values() if not d['is_na']])
-                            total_possible = sum([d['max'] for d in input_results.values() if not d['is_na']])
-                            final_score = round((total_earned / total_possible * 100) if total_possible > 0 else 0, 1)
-                            
-                            db_data = {
-                                "site_name": site_name, "site_type": site_type, "score": final_score,
-                                "details": json.dumps(input_results), "updated_by": st.session_state.current_user,
-                                "updated_at": datetime.utcnow().isoformat()
-                            }
-                            
-                            if is_edit:
-                                supabase.table("audit_results").update(db_data).eq("id", st.session_state.edit_target_id).execute()
-                            else:
-                                db_data["created_by"] = st.session_state.current_user
-                                supabase.table("audit_results").insert(db_data).execute()
-                            
-                            st.success("성공적으로 저장되었습니다!")
-                            st.session_state.admin_view = "list"
-                            st.rerun()
-
-        # ---------------------------------------------------------
-        # 3. 템플릿(점수표) 설정 탭
-        # ---------------------------------------------------------
-        with t_tab:
-            st.subheader("📥 엑셀 업로드 (대분류, 분류, PDCA, 점검사항, 과태료, 배점)")
-            up_file = st.file_uploader("파일 선택", type=['xlsx'])
-            if up_file:
-                df_up = pd.read_excel(up_file)
-                st.dataframe(df_up.head())
-                if st.button("🚀 이 데이터로 점수표 덮어쓰기"):
-                    recs = []
-                    for _, r in df_up.iterrows():
-                        recs.append({
-                            "category": str(r['대분류']), "sub_category": str(r.get('분류', '')),
-                            "pdca": str(r.get('PDCA', '')), "item_name": str(r['점검사항']),
-                            "penalty": str(r.get('과태료', '')), "max_score": int(r['배점'])
-                        })
-                    supabase.table("checklist_template").delete().gt("id", 0).execute()
-                    supabase.table("checklist_template").insert(recs).execute()
-                    st.success("업데이트 완료!")
-                    st.rerun()
-            
-            st.divider()
-            st.subheader("⚙️ 웹에서 직접 수정")
-            tmp_df = load_template()[['category', 'sub_category', 'pdca', 'item_name', 'penalty', 'max_score']]
-            edt_df = st.data_editor(tmp_df, num_rows="dynamic", use_container_width=True)
-            if st.button("💾 변경사항 저장"):
-                recs = edt_df.to_dict('records')
-                supabase.table("checklist_template").delete().gt("id", 0).execute()
-                supabase.table("checklist_template").insert(recs).execute()
-                st.success("저장되었습니다.")
+                            total_earned = sum([d['score'] for d in input_results.values()
