@@ -264,12 +264,14 @@ elif menu == "⚙️ 관리자 페이지":
                                             str_id = str(row['id'])
                                             existing_data = current_details.get(str_id, {"score": 0.0, "is_na": False})
                                             
+                                            # [안전장치] 저장된 과거 점수가 현재 바뀐 배점보다 높으면 에러가 나므로, min() 함수를 써서 한도를 씌워줍니다.
+                                            saved_score = float(existing_data.get("score", 0.0))
+                                            current_max = float(row['max_score'])
+                                            safe_score = min(saved_score, current_max)
+                                            
                                             c1, c2 = st.columns([3, 1])
                                             with c2: edit_is_na = st.checkbox(f"해당없음", value=existing_data.get("is_na", False), key=f"edit_na_{row['id']}")
-                                            with c1: edit_score = st.number_input("점수 입력", min_value=0.0, max_value=float(row['max_score']), step=0.5, value=float(existing_data.get("score", 0.0)), key=f"edit_score_{row['id']}", disabled=edit_is_na)
-                                            
-                                            edit_input_data[row['id']] = {"score": edit_score, "is_na": edit_is_na, "max": row['max_score']}
-                                            st.write("---")
+                                            with c1: edit_score = st.number_input("점수 입력", min_value=0.0, max_value=current_max, step=0.5, value=safe_score, key=f"edit_score_{row['id']}", disabled=edit_is_na)
                         
                         submit_col, del_col = st.columns([3, 1])
                         with submit_col:
