@@ -92,7 +92,6 @@ if menu == "📊 실시간 대시보드":
         def to_excel(df):
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                # 엑셀 다운로드 시 작성자, 수정자 기록 포함
                 export_cols = ['현장명', '현장타입', '최종점수', '등급']
                 if 'created_by' in df.columns: export_cols.append('created_by')
                 if 'updated_by' in df.columns: export_cols.append('updated_by')
@@ -132,7 +131,6 @@ elif menu == "⚙️ 관리자 페이지":
                     else:
                         st.error("아이디 또는 비밀번호가 일치하지 않습니다.")
                 except KeyError:
-                    # secrets에 passwords가 설정 안 된 초기 상태 예외 처리
                     if user_id == "gsmaster" and user_pw == "1234":
                         st.session_state.logged_in = True
                         st.session_state.current_user = "gsmaster"
@@ -168,7 +166,6 @@ elif menu == "⚙️ 관리자 페이지":
                 input_data = {}
                 
                 if not template_df.empty and 'category' in template_df.columns:
-                    # 결측치(NaN) 빈 문자열로 처리
                     template_df = template_df.fillna("") 
                     
                     for i, category in enumerate(main_categories):
@@ -177,7 +174,6 @@ elif menu == "⚙️ 관리자 페이지":
                             if filtered_df.empty:
                                 st.info("등록된 평가 항목이 없습니다.")
                             else:
-                                # 중분류(sub_category) 별로 묶어서 표시
                                 sub_cats = filtered_df['sub_category'].unique()
                                 for sub_cat in sub_cats:
                                     if sub_cat.strip() != "":
@@ -185,8 +181,11 @@ elif menu == "⚙️ 관리자 페이지":
                                     
                                     sub_df = filtered_df[filtered_df['sub_category'] == sub_cat]
                                     for index, row in sub_df.iterrows():
-                                        pdca_tag = f" [{row['pdca']}]" if row['pdca'] != "" else ""
-                                        st.markdown(f"**🔹 {row['item_name']}**{pdca_tag} (배점: {row['max_score']}점)")
+                                        # PDCA와 과태료 시각화 강화
+                                        pdca_tag = f" `[{row['pdca']}]`" if row['pdca'] != "" else ""
+                                        penalty_tag = f" 🚨**(과태료: {row['penalty']})**" if row['penalty'] != "" else ""
+                                        
+                                        st.markdown(f"**🔹 {row['item_name']}**{pdca_tag}{penalty_tag} (배점: {row['max_score']}점)")
                                         
                                         c1, c2 = st.columns([3, 1])
                                         with c2: is_na = st.checkbox(f"해당없음", key=f"new_na_{row['id']}")
@@ -257,8 +256,10 @@ elif menu == "⚙️ 관리자 페이지":
                                         
                                         sub_df = filtered_df[filtered_df['sub_category'] == sub_cat]
                                         for index, row in sub_df.iterrows():
-                                            pdca_tag = f" [{row['pdca']}]" if row['pdca'] != "" else ""
-                                            st.markdown(f"**🔹 {row['item_name']}**{pdca_tag} (배점: {row['max_score']}점)")
+                                            pdca_tag = f" `[{row['pdca']}]`" if row['pdca'] != "" else ""
+                                            penalty_tag = f" 🚨**(과태료: {row['penalty']})**" if row['penalty'] != "" else ""
+                                            
+                                            st.markdown(f"**🔹 {row['item_name']}**{pdca_tag}{penalty_tag} (배점: {row['max_score']}점)")
                                             
                                             str_id = str(row['id'])
                                             existing_data = current_details.get(str_id, {"score": 0.0, "is_na": False})
@@ -305,7 +306,8 @@ elif menu == "⚙️ 관리자 페이지":
             if uploaded_file is not None:
                 try:
                     df_upload = pd.read_excel(uploaded_file)
-                    required_columns = ['대분류', '중분류', '점검사항', 'PDCA', '배점']
+                    # 새로 변경된 엑셀 필수 제목 (분류, 과태료 포함)
+                    required_columns = ['대분류', '분류', 'PDCA', '점검사항', '과태료', '배점']
                     
                     if all(col in df_upload.columns for col in required_columns):
                         st.dataframe(df_upload, use_container_width=True)
@@ -314,9 +316,10 @@ elif menu == "⚙️ 관리자 페이지":
                             for _, row in df_upload.iterrows():
                                 upload_records.append({
                                     "category": str(row['대분류']),
-                                    "sub_category": str(row['중분류']) if pd.notna(row['중분류']) else "",
-                                    "item_name": str(row['점검사항']),
+                                    "sub_category": str(row['분류']) if pd.notna(row['분류']) else "",
                                     "pdca": str(row['PDCA']) if pd.notna(row['PDCA']) else "",
+                                    "item_name": str(row['점검사항']),
+                                    "penalty": str(row['과태료']) if pd.notna(row['과태료']) else "",
                                     "max_score": float(row['배점'])
                                 })
                             
@@ -336,9 +339,9 @@ elif menu == "⚙️ 관리자 페이지":
             
             temp_df = load_template()
             if temp_df.empty:
-                temp_df = pd.DataFrame(columns=['category', 'sub_category', 'item_name', 'pdca', 'max_score'])
+                temp_df = pd.DataFrame(columns=['category', 'sub_category', 'pdca', 'item_name', 'penalty', 'max_score'])
             else:
-                temp_df = temp_df[['category', 'sub_category', 'item_name', 'pdca', 'max_score']]
+                temp_df = temp_df[['category', 'sub_category', 'pdca', 'item_name', 'penalty', 'max_score']]
                 
             edited_df = st.data_editor(
                 temp_df, 
@@ -346,9 +349,10 @@ elif menu == "⚙️ 관리자 페이지":
                 use_container_width=True,
                 column_config={
                     "category": st.column_config.SelectboxColumn("대분류", options=main_categories, required=True),
-                    "sub_category": st.column_config.TextColumn("중분류"),
-                    "item_name": st.column_config.TextColumn("점검사항", required=True),
+                    "sub_category": st.column_config.TextColumn("분류"),
                     "pdca": st.column_config.TextColumn("PDCA"),
+                    "item_name": st.column_config.TextColumn("점검사항", required=True),
+                    "penalty": st.column_config.TextColumn("과태료"),
                     "max_score": st.column_config.NumberColumn("배점", min_value=0.0, required=True)
                 }
             )
