@@ -28,7 +28,6 @@ st.markdown("""
     .stProgress > div > div > div > div { background-color: #28a745; }
     div[data-baseweb="select"] { font-size: 1.05rem !important; font-weight: bold !important; text-align: center !important; cursor: pointer; }
     
-    /* 플로팅 저장 버튼 고정 스타일 */
     div.st-key-floating_save {
         position: fixed;
         bottom: 40px;
@@ -70,11 +69,33 @@ if 'admin_view' not in st.session_state: st.session_state.admin_view = "list"
 if 'edit_target_id' not in st.session_state: st.session_state.edit_target_id = None
 
 # ==========================================
-# 3. 데이터 로드 및 가공
+# 3. 데이터 로드 및 버전 관리 함수
 # ==========================================
-def load_template():
-    res = supabase.table("checklist_template").select("*").order("id").execute()
-    return pd.DataFrame(res.data)
+def get_template_versions():
+    try:
+        res = supabase.table("checklist_template").select("version_name").execute()
+        df = pd.DataFrame(res.data)
+        if not df.empty and 'version_name' in df.columns:
+            versions = df['version_name'].dropna().unique().tolist()
+            return versions if versions else ["기본버전"]
+        return ["기본버전"]
+    except Exception:
+        return ["기본버전"]
+
+def load_template(version=None):
+    try:
+        query = supabase.table("checklist_template").select("*")
+        if version and version != "기본버전":
+            query = query.eq("version_name", version)
+        res = query.order("id").execute()
+        return pd.DataFrame(res.data)
+    except Exception:
+        # SQL 업데이트를 안 했을 경우의 에러 방어(Fallback)
+        try:
+            res = supabase.table("checklist_template").select("*").order("id").execute()
+            return pd.DataFrame(res.data)
+        except:
+            return pd.DataFrame()
 
 def load_results():
     res = supabase.table("audit_results").select("*").order("inspection_date", desc=True).execute()
@@ -89,13 +110,12 @@ st.sidebar.title("🏗️ GS건설 내부심사")
 menu = st.sidebar.radio("메뉴 이동", ["📊 통합 대시보드", "📅 로그인/점수 입력"])
 
 # ==========================================
-# [페이지 1] 통합 대시보드
+# [페이지 1] 통합 대시보드 (버전 상관없이 통합 분석)
 # ==========================================
 if menu == "📊 통합 대시보드":
     st.title("🏗️ GS건설 현장 내부심사 통합 대시보드")
     
     df = load_results()
-    
     valid_rows = []
     if not df.empty:
         for _, row in df.iterrows():
@@ -296,51 +316,35 @@ elif menu == "📅 로그인/점수 입력":
                             st.markdown("<div style='border-bottom:1px solid #eee;'></div>", unsafe_allow_html=True)
 
             # ---------------------------------------------------------
-            # 신규 방 만들기
+            # 신규 방 만들기 (템플릿 버전 드롭다운 적용)
             # ---------------------------------------------------------
             elif st.session_state.admin_view == "create":
                 st.subheader("📝 새로운 현장 심사 방 만들기")
-                st.info("💡 과거 데이터를 입력하시려면, [템플릿 기준 선택]에서 과거 현장의 점수표를 그대로 복사해 올 수 있습니다!")
+                st.info("💡 사용할 템플릿(점수표) 버전을 선택하면, 해당 기준이 이 방에 영구적으로 박제(저장)됩니다.")
                 
-                res_df = load_results()
-                template_options = ["🌟 시스템 최신 마스터 점수표 적용"]
-                if not res_df.empty:
-                    for _, row in res_df.iterrows():
-                        template_options.append(f"📂 [{row['inspection_date']}] {row['현장명']} 점수표 복사")
+                versions = get_template_versions()
 
                 with st.form("create_room_form"):
-                    f1, f2, f3 = st.columns(3)
+                    f1, f2, f3, f4 = st.columns([2, 1, 1, 2])
                     site_name = f1.text_input("현장명")
                     site_type = f2.selectbox("분류", ["건축", "인프라", "플랜트"])
                     inspection_date = f3.date_input("점검 실시일", value=date.today())
+                    sel_template = f4.selectbox("사용할 템플릿 버전 선택", versions)
                     
                     st.divider()
-                    sel_template = st.selectbox("적용할 템플릿(점수표) 기준 선택", template_options)
                     
                     if st.form_submit_button("✅ 심사 방 생성하기", use_container_width=True):
                         if not site_name: st.error("현장명을 입력해주세요.")
                         else:
+                            # 선택한 버전의 템플릿을 끌어와서 박제함
+                            t_df = load_template(sel_template).fillna("")
                             initial_details = {}
-                            
-                            if sel_template.startswith("🌟"):
-                                t_df = load_template().fillna("")
-                                for _, itm in t_df.iterrows():
-                                    initial_details[str(itm['id'])] = {
-                                        "score": None, "is_na": False, "max": int(itm['max_score']), "memo": "",
-                                        "category": str(itm['category']).strip(), "pdca": str(itm['pdca']).strip(),
-                                        "item_name": str(itm['item_name']).strip(), "penalty": str(itm['penalty']).strip()
-                                    }
-                            else:
-                                sel_idx = template_options.index(sel_template) - 1
-                                source_row = res_df.iloc[sel_idx]
-                                source_details = json.loads(source_row['details']) if source_row['details'] else {}
-                                
-                                for iid, data in source_details.items():
-                                    initial_details[iid] = {
-                                        "score": None, "is_na": False, "max": data.get('max', 0), "memo": "",
-                                        "category": data.get('category', ''), "pdca": data.get('pdca', ''),
-                                        "item_name": data.get('item_name', ''), "penalty": data.get('penalty', '')
-                                    }
+                            for _, itm in t_df.iterrows():
+                                initial_details[str(itm['id'])] = {
+                                    "score": None, "is_na": False, "max": int(itm['max_score']), "memo": "",
+                                    "category": str(itm['category']).strip(), "pdca": str(itm['pdca']).strip(),
+                                    "item_name": str(itm['item_name']).strip(), "penalty": str(itm['penalty']).strip()
+                                }
                             
                             payload = {
                                 "site_name": site_name, "site_type": site_type, "score": 0, 
@@ -349,7 +353,7 @@ elif menu == "📅 로그인/점수 입력":
                                 "updated_by": st.session_state.current_user, "updated_at": datetime.utcnow().isoformat()
                             }
                             supabase.table("audit_results").insert(payload).execute()
-                            st.session_state.flash_msg = "✅ 심사 방이 생성되었습니다!"
+                            st.session_state.flash_msg = f"✅ '{sel_template}' 버전으로 심사 방이 생성되었습니다!"
                             st.session_state.admin_view = "list"
                             st.rerun()
                 if st.button("⬅️ 취소하고 돌아가기"):
@@ -357,47 +361,27 @@ elif menu == "📅 로그인/점수 입력":
                     st.rerun()
 
             # ---------------------------------------------------------
-            # 심사 데이터 입력 (에러 방어 로직 추가)
+            # 심사 데이터 입력 (자동 레포트 다운로드)
             # ---------------------------------------------------------
             elif st.session_state.admin_view == "edit":
                 r = load_results()
                 target = r[r['id'] == st.session_state.edit_target_id].iloc[0]
                 cur_details = json.loads(target['details']) if target['details'] else {}
 
-                # [핵심 방어] 과거 껍데기 방을 위한 자동 템플릿 마이그레이션
-                is_legacy = False
-                if cur_details:
-                    first_key = list(cur_details.keys())[0]
-                    if 'item_name' not in cur_details[first_key]: is_legacy = True
-                
-                if not cur_details or is_legacy:
-                    t_df_master = load_template().fillna("")
-                    for _, itm in t_df_master.iterrows():
-                        iid = str(itm['id'])
-                        if iid not in cur_details: cur_details[iid] = {}
-                        cur_details[iid].update({
-                            "max": int(itm['max_score']), "category": str(itm['category']).strip(),
-                            "pdca": str(itm['pdca']).strip(), "item_name": str(itm['item_name']).strip(),
-                            "penalty": str(itm['penalty']).strip()
-                        })
-
                 t_data = []
                 for iid, data in cur_details.items():
                     t_data.append({
-                        "id": int(iid), "category": data.get("category", "기타"), "pdca": data.get("pdca", ""),
-                        "item_name": data.get("item_name", "이름 없음"), "penalty": data.get("penalty", ""),
+                        "id": int(iid), "category": data.get("category", "분류없음"), "pdca": data.get("pdca", ""),
+                        "item_name": data.get("item_name", "항목없음"), "penalty": data.get("penalty", ""),
                         "max_score": data.get("max", 0)
                     })
                 t_df = pd.DataFrame(t_data)
                 
-                # [핵심 방어] st.tabs() 에러 방지를 위해 카테고리가 비어있지 않도록 보장
                 current_cats = []
                 if not t_df.empty and 'category' in t_df.columns:
                     for c in t_df['category'].unique():
                         if c: current_cats.append(c)
-                
-                if not current_cats:
-                    current_cats = ["항목 없음"]
+                if not current_cats: current_cats = ["항목 없음"]
 
                 total_items = len(t_df)
 
@@ -415,6 +399,7 @@ elif menu == "📅 로그인/점수 입력":
                         st.session_state[f"sel_s_{iid}"] = prev.get('score', None)
                         st.session_state[f"txt_m_{iid}"] = prev.get('memo', "")
 
+                # [상단 툴바] 원클릭 레포트 다운로드 버튼 배치
                 c_back, c_export, c_empty = st.columns([1.5, 2.5, 3])
                 with c_back:
                     if st.button("⬅️ 목록으로 돌아가기"):
@@ -459,7 +444,7 @@ elif menu == "📅 로그인/점수 입력":
                 for i, cat in enumerate(current_cats):
                     with tabs[i]:
                         if cat == "항목 없음":
-                            st.warning("⚠️ 이 심사 방에는 저장된 점검 항목이 없습니다. (과거에 생성된 빈 방이거나 마스터 템플릿이 비어있습니다.)")
+                            st.warning("⚠️ 이 심사 방에는 저장된 점검 항목이 없습니다.")
                             continue
                             
                         items = t_df[t_df['category'] == cat]
@@ -519,36 +504,50 @@ elif menu == "📅 로그인/점수 입력":
                     st.rerun()
 
         # ---------------------------------------------------------
-        # 마스터 (템플릿) 설정 탭
+        # 마스터 (템플릿) 설정 탭 (버전 관리 추가!)
         # ---------------------------------------------------------
         with t_tab:
-            st.subheader("📥 엑셀로 질문지(템플릿) 일괄 업로드")
+            st.subheader("📥 엑셀로 신규 템플릿 버전 업로드")
+            new_v_name = st.text_input("새로운 템플릿 버전명 입력 (예: 2026년 상반기 기준)")
             up = st.file_uploader("양식에 맞춘 엑셀 파일 선택", type=['xlsx'])
-            if up and st.button("🚀 이 데이터로 점수표 덮어쓰기 (기존 심사 방은 영향 없음)"):
-                df_up = pd.read_excel(up).fillna("")
-                recs = []
-                for _, r in df_up.iterrows():
-                    try: max_s = int(r['배점'])
-                    except: max_s = 0
-                    recs.append({"category": str(r['대분류']).strip(), "sub_category": str(r.get('분류', '')).strip(), "pdca": str(r.get('PDCA', '')).strip(), "item_name": str(r['점검사항']).strip(), "penalty": str(r.get('과태료', '')).strip(), "max_score": max_s})
-                supabase.table("checklist_template").delete().gt("id", 0).execute()
-                supabase.table("checklist_template").insert(recs).execute()
-                st.success("✅ 업데이트 완료! 지금부터 생성되는 신규 심사 방은 이 템플릿을 따릅니다.")
-                st.rerun()
+            if up and st.button("🚀 새 버전으로 등록하기"):
+                if not new_v_name:
+                    st.error("버전명을 먼저 입력해주세요!")
+                else:
+                    df_up = pd.read_excel(up).fillna("")
+                    recs = []
+                    for _, r in df_up.iterrows():
+                        try: max_s = int(r['배점'])
+                        except: max_s = 0
+                        recs.append({
+                            "version_name": new_v_name,
+                            "category": str(r['대분류']).strip(), "sub_category": str(r.get('분류', '')).strip(), 
+                            "pdca": str(r.get('PDCA', '')).strip(), "item_name": str(r['점검사항']).strip(), 
+                            "penalty": str(r.get('과태료', '')).strip(), "max_score": max_s
+                        })
+                    # 기존 템플릿 삭제 안 함! (누적 저장)
+                    supabase.table("checklist_template").insert(recs).execute()
+                    st.success(f"✅ '{new_v_name}' 버전 업데이트 완료! 신규 방 생성 시 사용할 수 있습니다.")
+                    st.rerun()
             
             st.divider()
-            st.subheader("⚙️ 웹에서 직접 수정 및 다운로드")
-            tmp_df = load_template()
+            st.subheader("⚙️ 기존 템플릿 버전별 조회 및 수정")
+            versions = get_template_versions()
+            sel_edit_ver = st.selectbox("조회/수정할 템플릿 버전 선택", versions)
+            
+            tmp_df = load_template(sel_edit_ver)
             if not tmp_df.empty:
-                tmp_df = tmp_df[['category', 'sub_category', 'pdca', 'item_name', 'penalty', 'max_score']]
-                edt_df = st.data_editor(tmp_df, num_rows="dynamic", use_container_width=True, column_config={"category": st.column_config.TextColumn("대분류", required=True), "max_score": st.column_config.NumberColumn("배점", required=True)})
+                tmp_df_disp = tmp_df[['category', 'sub_category', 'pdca', 'item_name', 'penalty', 'max_score']]
+                edt_df = st.data_editor(tmp_df_disp, num_rows="dynamic", use_container_width=True, column_config={"category": st.column_config.TextColumn("대분류", required=True), "max_score": st.column_config.NumberColumn("배점", required=True)})
                 
                 btn_col1, btn_col2 = st.columns(2)
                 with btn_col1:
-                    if st.button("💾 변경사항 저장", type="primary", use_container_width=True):
+                    if st.button("💾 이 버전 변경사항 저장", type="primary", use_container_width=True):
                         recs = edt_df.fillna("").to_dict('records')
-                        for rec in recs: rec['category'] = str(rec['category']).strip()
-                        supabase.table("checklist_template").delete().gt("id", 0).execute()
+                        for rec in recs: 
+                            rec['category'] = str(rec['category']).strip()
+                            rec['version_name'] = sel_edit_ver
+                        supabase.table("checklist_template").delete().eq("version_name", sel_edit_ver).execute()
                         supabase.table("checklist_template").insert(recs).execute()
                         st.success("✅ 저장 완료.")
                         st.rerun()
@@ -556,8 +555,8 @@ elif menu == "📅 로그인/점수 입력":
                     export_df = edt_df.rename(columns={"category": "대분류", "sub_category": "분류", "pdca": "PDCA", "item_name": "점검사항", "penalty": "과태료", "max_score": "배점"})
                     output = io.BytesIO()
                     with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                        export_df.to_excel(writer, index=False, sheet_name='점검템플릿')
+                        export_df.to_excel(writer, index=False, sheet_name=sel_edit_ver)
                     excel_data = output.getvalue()
-                    st.download_button(label="📥 현재 점수표 엑셀로 다운로드", data=excel_data, file_name=f"GS건설_보건관리_점검표양식_{date.today().strftime('%Y%m%d')}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+                    st.download_button(label="📥 이 템플릿 엑셀로 다운로드", data=excel_data, file_name=f"GS건설_점검표_{sel_edit_ver}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
             else:
-                st.info("현재 등록된 템플릿이 없습니다. 엑셀을 업로드해주세요.")
+                st.info("해당 버전의 템플릿 데이터가 없습니다.")
