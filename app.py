@@ -25,8 +25,8 @@ st.markdown("""
     .sub-text { color: #6c757d; font-size: 0.85rem; }
     /* 진행률 바 색상 */
     .stProgress > div > div > div > div { background-color: #28a745; }
-    /* 숫자 입력기 텍스트 중앙 정렬 및 폰트 강조 */
-    .stNumberInput input { font-size: 1.05rem !important; font-weight: bold !important; text-align: center !important; }
+    /* 드롭다운 텍스트 중앙 정렬 및 폰트 강조 */
+    div[data-baseweb="select"] { font-size: 1.05rem !important; font-weight: bold !important; text-align: center !important; cursor: pointer; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -284,16 +284,18 @@ elif menu == "📅 심사 게시판":
                                 
                                 st.markdown(f"**🔹 {itm['item_name']}** (배점: {m}점)")
                                 
-                                # [UI 개선] 점수, N/A, 메모를 한 줄에 콤팩트하게 배치 (비율 1.5 : 1 : 5)
                                 c_score, c_na, c_memo = st.columns([1.5, 1, 5])
                                 
                                 with c_na:
                                     st.checkbox("해당없음", key=f"na_{iid}")
                                     
                                 with c_score:
-                                    st.number_input("점수", min_value=0, max_value=m, step=1, key=f"s_{iid}", 
-                                                   disabled=st.session_state[f"na_{iid}"], 
-                                                   label_visibility="collapsed")
+                                    # [UX 해결] 멍때리는 증감버튼 대신 모바일 친화적이고 터치 한 번에 펼쳐지는 드롭다운(Selectbox)으로 변경!
+                                    opt = list(range(m + 1))
+                                    st.selectbox("점수", options=opt, index=opt.index(st.session_state[f"s_{iid}"]) if st.session_state[f"s_{iid}"] is not None else None, 
+                                                 placeholder="점수 선택 ⌄", key=f"s_{iid}", 
+                                                 disabled=st.session_state[f"na_{iid}"], 
+                                                 label_visibility="collapsed")
                                                    
                                 with c_memo:
                                     st.text_input("메모", key=f"m_{iid}", label_visibility="collapsed", placeholder="감점 사유 및 메모 (선택)")
