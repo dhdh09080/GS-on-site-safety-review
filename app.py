@@ -23,9 +23,7 @@ st.markdown("""
     .normal { background-color: #fff3cd; color: #856404; border: 1px solid #ffeeba; }
     .warning { background-color: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
     .sub-text { color: #6c757d; font-size: 0.85rem; }
-    /* 진행률 바 색상 */
     .stProgress > div > div > div > div { background-color: #28a745; }
-    /* 드롭다운 텍스트 중앙 정렬 및 폰트 강조 */
     div[data-baseweb="select"] { font-size: 1.05rem !important; font-weight: bold !important; text-align: center !important; cursor: pointer; }
     </style>
     """, unsafe_allow_html=True)
@@ -113,7 +111,7 @@ if menu == "📊 통합 대시보드":
             details = json.loads(row['details']) if isinstance(row['details'], str) else row['details']
             for item_id, val in details.items():
                 t_info = template_df[template_df['id'] == int(item_id)]
-                if not t_info.empty and not val.get('is_na', False):
+                if not t_info.empty and not val.get('is_na', False) and val.get('score') is not None:
                     analysis_data.append({
                         'site_type': row['현장타입'], 'pdca': t_info.iloc[0]['pdca'],
                         'category': t_info.iloc[0]['category'], 'item_name': t_info.iloc[0]['item_name'],
@@ -187,10 +185,13 @@ elif menu == "📅 심사 게시판":
         m_tab, t_tab = st.tabs(["📝 리스트 관리", "⚙️ 점수표(마스터) 설정"])
         
         with m_tab:
+            # ---------------------------------------------------------
+            # 게시판 목록
+            # ---------------------------------------------------------
             if st.session_state.admin_view == "list":
                 col_s, col_a = st.columns([3, 1])
                 sq = col_s.text_input("검색", placeholder="현장명 검색...", label_visibility="collapsed")
-                if col_a.button("➕ 신규 심사 등록", type="primary", use_container_width=True):
+                if col_a.button("➕ 신규 심사 등록 (방 만들기)", type="primary", use_container_width=True):
                     st.session_state.admin_view = "create"
                     st.rerun()
                 
@@ -208,7 +209,14 @@ elif menu == "📅 심사 게시판":
                                 st.session_state.edit_target_id, st.session_state.admin_view = int(row['id']), "edit"
                                 st.rerun()
                             r2.markdown(f"<div style='text-align:center; padding-top:12px;'>{row['현장타입']}</div>", unsafe_allow_html=True)
-                            r3.markdown(f"<div style='text-align:center; padding-top:8px;'><span class='badge {b_c}'>{sc}점</span></div>", unsafe_allow_html=True)
+                            
+                            # 빈 껍데기(방만 만든 상태) 구분 로직
+                            details_dict = json.loads(row['details']) if row['details'] else {}
+                            if not details_dict:
+                                r3.markdown(f"<div style='text-align:center; padding-top:8px;'><span class='badge' style='background-color:#e9ecef; color:#495057;'>입력 대기중</span></div>", unsafe_allow_html=True)
+                            else:
+                                r3.markdown(f"<div style='text-align:center; padding-top:8px;'><span class='badge {b_c}'>{sc}점</span></div>", unsafe_allow_html=True)
+                                
                             r4.markdown(f"<div style='text-align:center;' class='sub-text'><b>{disp_date}</b><br>({row.get('updated_by','-')})</div>", unsafe_allow_html=True)
                             with r5:
                                 ec, dc = st.columns(2)
@@ -220,118 +228,160 @@ elif menu == "📅 심사 게시판":
                                     st.rerun()
                             st.markdown("<div style='border-bottom:1px solid #eee;'></div>", unsafe_allow_html=True)
 
-            elif st.session_state.admin_view in ["create", "edit"]:
-                target_id_str = f"{st.session_state.admin_view}_{st.session_state.edit_target_id}"
-                if st.session_state.get('active_form_id') != target_id_str:
-                    st.session_state.active_form_id = target_id_str
-                    if st.session_state.admin_view == "edit":
-                        r = load_results()
-                        target = r[r['id'] == st.session_state.edit_target_id].iloc[0]
-                        st.session_state.f_site_name = target['현장명']
-                        st.session_state.f_site_type = target['현장타입']
-                        st.session_state.f_insp_date = datetime.strptime(target['inspection_date'], '%Y-%m-%d').date() if target.get('inspection_date') else date.today()
-                        cur_details = json.loads(target['details'])
-                    else:
-                        st.session_state.f_site_name = ""
-                        st.session_state.f_site_type = "건축"
-                        st.session_state.f_insp_date = date.today()
-                        cur_details = {}
-                        
-                    t_df = load_template()
-                    for _, itm in t_df.iterrows():
-                        iid = str(itm['id'])
-                        prev = cur_details.get(iid, None)
-                        if prev is None:
-                            st.session_state[f"na_{iid}"] = False
-                            st.session_state[f"s_{iid}"] = None
-                            st.session_state[f"m_{iid}"] = ""
+            # ---------------------------------------------------------
+            # [UX 개편] 신규 심사 등록 (껍데기(방)만 생성)
+            # ---------------------------------------------------------
+            elif st.session_state.admin_view == "create":
+                st.subheader("📝 새로운 현장 심사 방 만들기")
+                st.info("💡 동시 작업을 위해 현장 기본 정보를 먼저 등록합니다. 방이 만들어진 후 목록에서 접속하여 점수를 입력하세요.")
+                
+                with st.form("create_room_form"):
+                    f1, f2, f3 = st.columns(3)
+                    site_name = f1.text_input("현장명")
+                    site_type = f2.selectbox("분류", ["건축", "인프라", "플랜트"])
+                    inspection_date = f3.date_input("점검 실시일", value=date.today())
+                    
+                    if st.form_submit_button("✅ 심사 방 생성하기", use_container_width=True):
+                        if not site_name:
+                            st.error("현장명을 입력해주세요.")
                         else:
-                            st.session_state[f"na_{iid}"] = prev.get('is_na', False)
-                            st.session_state[f"s_{iid}"] = prev.get('score', None)
-                            st.session_state[f"m_{iid}"] = prev.get('memo', "")
+                            payload = {
+                                "site_name": site_name, "site_type": site_type, "score": 0, 
+                                "inspection_date": inspection_date.isoformat(),
+                                "details": json.dumps({}), # 초기에는 완전 빈 껍데기로 생성
+                                "created_by": st.session_state.current_user,
+                                "updated_by": st.session_state.current_user,
+                                "updated_at": datetime.utcnow().isoformat()
+                            }
+                            supabase.table("audit_results").insert(payload).execute()
+                            st.success("심사 방이 생성되었습니다! 목록에서 해당 현장을 클릭하여 점수를 입력하세요.")
+                            st.session_state.admin_view = "list"
+                            st.rerun()
+                
+                if st.button("⬅️ 취소하고 돌아가기"):
+                    st.session_state.admin_view = "list"
+                    st.rerun()
 
+            # ---------------------------------------------------------
+            # [UX 개편] 수정 및 탭별 병합(Merge) 저장
+            # ---------------------------------------------------------
+            elif st.session_state.admin_view == "edit":
+                # 데이터 로드
+                r = load_results()
+                target = r[r['id'] == st.session_state.edit_target_id].iloc[0]
+                s_name = target['현장명']
+                s_type = target['현장타입']
+                s_date = datetime.strptime(target['inspection_date'], '%Y-%m-%d').date() if target.get('inspection_date') else date.today()
+                cur_details = json.loads(target['details']) if target['details'] else {}
+                
                 t_df = load_template().fillna("")
                 t_df['category'] = t_df['category'].astype(str).str.strip()
                 total_items = len(t_df)
-                
-                c_back, c_max = st.columns([1, 1])
-                if c_back.button("⬅️ 목록으로"):
+
+                # State 초기화
+                target_id_str = f"edit_{st.session_state.edit_target_id}"
+                if st.session_state.get('active_form_id') != target_id_str:
+                    st.session_state.active_form_id = target_id_str
+                    for _, itm in t_df.iterrows():
+                        iid = str(itm['id'])
+                        prev = cur_details.get(iid, None)
+                        st.session_state[f"na_{iid}"] = prev.get('is_na', False) if prev else False
+                        st.session_state[f"s_{iid}"] = prev.get('score', None) if prev else None
+                        st.session_state[f"m_{iid}"] = prev.get('memo', "") if prev else ""
+
+                c_back, c_empty = st.columns([1, 4])
+                if c_back.button("⬅️ 목록으로 돌아가기"):
                     st.session_state.admin_view, st.session_state.active_form_id = "list", None
                     st.rerun()
-                if c_max.button("💯 모든 항목 만점 채우기", type="primary"):
-                    for _, itm in t_df.iterrows():
-                        st.session_state[f"s_{str(itm['id'])}"] = int(itm['max_score'])
-                        st.session_state[f"na_{str(itm['id'])}"] = False
-                    st.rerun()
 
-                answered = sum([1 for _, itm in t_df.iterrows() if st.session_state.get(f"na_{str(itm['id'])}", False) or st.session_state.get(f"s_{str(itm['id'])}") is not None])
-                st.progress(answered/total_items if total_items > 0 else 0, text=f"📊 작성 진행률: {answered} / {total_items} 완료")
+                st.subheader(f"📝 '{s_name}' 심사 진행")
                 
-                with st.form("audit_form"):
-                    f1, f2, f3 = st.columns(3)
-                    site_name = f1.text_input("현장명", key="f_site_name")
-                    site_type = f2.selectbox("분류", ["건축", "인프라", "플랜트"], key="f_site_type")
-                    inspection_date = f3.date_input("점검 실시일", key="f_insp_date")
-                    st.divider()
-
-                    tabs = st.tabs(main_categories)
-                    for i, cat in enumerate(main_categories):
-                        with tabs[i]:
-                            items = t_df[t_df['category'] == cat.strip()]
-                            for _, itm in items.iterrows():
-                                iid = str(itm['id'])
-                                m = int(itm['max_score'])
-                                
-                                st.markdown(f"**🔹 {itm['item_name']}** (배점: {m}점)")
-                                
-                                c_score, c_na, c_memo = st.columns([1.5, 1, 5])
-                                
-                                with c_na:
-                                    st.checkbox("해당없음", key=f"na_{iid}")
-                                    
-                                with c_score:
-                                    # [UX 해결] 멍때리는 증감버튼 대신 모바일 친화적이고 터치 한 번에 펼쳐지는 드롭다운(Selectbox)으로 변경!
-                                    opt = list(range(m + 1))
-                                    st.selectbox("점수", options=opt, index=opt.index(st.session_state[f"s_{iid}"]) if st.session_state[f"s_{iid}"] is not None else None, 
-                                                 placeholder="점수 선택 ⌄", key=f"s_{iid}", 
-                                                 disabled=st.session_state[f"na_{iid}"], 
-                                                 label_visibility="collapsed")
-                                                   
-                                with c_memo:
-                                    st.text_input("메모", key=f"m_{iid}", label_visibility="collapsed", placeholder="감점 사유 및 메모 (선택)")
-                                
-                                st.write("---")
-                    
-                    if st.form_submit_button("✅ 최종 데이터 저장하기", use_container_width=True):
-                        unanswered = [itm['item_name'] for _, itm in t_df.iterrows() if not st.session_state[f"na_{str(itm['id'])}"] and st.session_state[f"s_{str(itm['id'])}"] is None]
-                        
-                        if not site_name: st.error("🚨 현장명을 입력해주세요.")
-                        elif unanswered: st.error(f"🚨 미입력 항목이 {len(unanswered)}개 있습니다. (첫 번째: {unanswered[0]})")
-                        else:
-                            res_input = {}
-                            for _, itm in t_df.iterrows():
-                                iid = str(itm['id'])
-                                res_input[iid] = {"score": st.session_state[f"s_{iid}"], "is_na": st.session_state[f"na_{iid}"], "max": int(itm['max_score']), "memo": st.session_state[f"m_{iid}"]}
-                            
-                            earn = sum([d['score'] for d in res_input.values() if not d['is_na']])
-                            poss = sum([d['max'] for d in res_input.values() if not d['is_na']])
-                            f_sc = round((earn/poss*100) if poss>0 else 0, 1)
-                            
-                            payload = {
-                                "site_name": site_name, "site_type": site_type, "score": f_sc, 
-                                "inspection_date": inspection_date.isoformat(),
-                                "details": json.dumps(res_input), "updated_by": st.session_state.current_user, 
-                                "updated_at": datetime.utcnow().isoformat()
-                            }
-                            if st.session_state.admin_view == "edit": supabase.table("audit_results").update(payload).eq("id", st.session_state.edit_target_id).execute()
-                            else:
-                                payload["created_by"] = st.session_state.current_user
-                                supabase.table("audit_results").insert(payload).execute()
-                            
-                            st.session_state.admin_view, st.session_state.active_form_id = "list", None
-                            st.success("저장 완료!")
+                # 전체 진행률
+                answered = sum([1 for _, itm in t_df.iterrows() if st.session_state.get(f"na_{str(itm['id'])}", False) or st.session_state.get(f"s_{str(itm['id'])}") is not None])
+                st.progress(answered/total_items if total_items > 0 else 0, text=f"📊 전체 작성 진행률: {answered} / {total_items} 완료")
+                
+                # 기본 정보 변경 영역 (가볍게)
+                with st.expander("현장 기본 정보 (수정 필요 시 클릭)"):
+                    with st.form("basic_info_form"):
+                        f1, f2, f3 = st.columns(3)
+                        new_s_name = f1.text_input("현장명", value=s_name)
+                        new_s_type = f2.selectbox("분류", ["건축", "인프라", "플랜트"], index=["건축", "인프라", "플랜트"].index(s_type))
+                        new_s_date = f3.date_input("점검 실시일", value=s_date)
+                        if st.form_submit_button("기본 정보만 업데이트"):
+                            supabase.table("audit_results").update({
+                                "site_name": new_s_name, "site_type": new_s_type, "inspection_date": new_s_date.isoformat()
+                            }).eq("id", st.session_state.edit_target_id).execute()
+                            st.success("기본 정보가 업데이트되었습니다.")
                             st.rerun()
 
+                st.divider()
+
+                # 탭별 렌더링 및 개별 저장
+                tabs = st.tabs(main_categories)
+                for i, cat in enumerate(main_categories):
+                    with tabs[i]:
+                        items = t_df[t_df['category'] == cat.strip()]
+                        if items.empty:
+                            st.info("이 분류에 등록된 질문지가 없습니다.")
+                        else:
+                            # 탭 내부 폼
+                            with st.form(key=f"form_tab_{i}"):
+                                # 일괄 만점 버튼 역할 (세션 스테이트 직접 변경이 폼 내에서 안되므로 수동 입력 유도)
+                                st.info("💡 동시 협업 모드: 이 탭의 내용만 독립적으로 저장됩니다. 다른 탭의 데이터는 건드리지 않습니다.")
+                                st.write("---")
+                                
+                                tab_input = {}
+                                for _, itm in items.iterrows():
+                                    iid = str(itm['id'])
+                                    m = int(itm['max_score'])
+                                    st.markdown(f"**🔹 {itm['item_name']}** (배점: {m}점)")
+                                    
+                                    c_score, c_na, c_memo = st.columns([1.5, 1, 5])
+                                    with c_na: na_val = st.checkbox("해당없음", value=st.session_state[f"na_{iid}"])
+                                    with c_score:
+                                        opt = list(range(m + 1))
+                                        s_val = st.selectbox("점수", options=opt, index=opt.index(st.session_state[f"s_{iid}"]) if st.session_state[f"s_{iid}"] is not None else None, 
+                                                     placeholder="점수 선택 ⌄", disabled=na_val, label_visibility="collapsed")
+                                    with c_memo:
+                                        m_val = st.text_input("메모", value=st.session_state[f"m_{iid}"], label_visibility="collapsed", placeholder="감점 사유 및 메모")
+                                    
+                                    tab_input[iid] = {"score": s_val, "is_na": na_val, "max": m, "memo": m_val}
+                                    st.write("---")
+
+                                # 탭별 부분 병합(Merge) 저장 로직
+                                if st.form_submit_button(f"✅ '{cat.split('.')[1].strip()}' 파트 저장", type="primary", use_container_width=True):
+                                    # 1. 미입력 검사 (현재 탭만)
+                                    unanswered = [itm['item_name'] for _, itm in items.iterrows() if not tab_input[str(itm['id'])]['is_na'] and tab_input[str(itm['id'])]['score'] is None]
+                                    
+                                    if unanswered:
+                                        st.error(f"🚨 이 탭에 미입력 항목이 있습니다. (예: {unanswered[0]})")
+                                    else:
+                                        # 2. 최신 전체 데이터 로드 (DB에서 방금 누가 수정한 것까지 끌어옴)
+                                        fresh_r = supabase.table("audit_results").select("details").eq("id", st.session_state.edit_target_id).execute()
+                                        fresh_details = json.loads(fresh_r.data[0]['details']) if fresh_r.data[0]['details'] else {}
+                                        
+                                        # 3. 현재 탭에서 수정한 데이터만 쏙 덮어쓰기 (Merge)
+                                        fresh_details.update(tab_input)
+                                        
+                                        # 4. 전체 점수 재계산 (방금 합친 데이터 기준)
+                                        earn = sum([d['score'] for d in fresh_details.values() if not d['is_na'] and d['score'] is not None])
+                                        poss = sum([d['max'] for d in fresh_details.values() if not d['is_na'] and d['score'] is not None])
+                                        f_sc = round((earn/poss*100) if poss>0 else 0, 1)
+
+                                        # 5. DB 업데이트
+                                        supabase.table("audit_results").update({
+                                            "score": f_sc, 
+                                            "details": json.dumps(fresh_details), 
+                                            "updated_by": st.session_state.current_user, 
+                                            "updated_at": datetime.utcnow().isoformat()
+                                        }).eq("id", st.session_state.edit_target_id).execute()
+                                        
+                                        st.success(f"'{cat.split('.')[1].strip()}' 파트가 안전하게 저장되었습니다!")
+                                        st.rerun()
+
+        # ---------------------------------------------------------
+        # 마스터 (템플릿) 설정 탭 
+        # ---------------------------------------------------------
         with t_tab:
             st.subheader("📥 엑셀로 질문지(템플릿) 일괄 업로드")
             up = st.file_uploader("양식에 맞춘 엑셀 파일 선택", type=['xlsx'])
