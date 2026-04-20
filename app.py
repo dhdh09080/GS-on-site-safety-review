@@ -28,6 +28,7 @@ st.markdown("""
     .stProgress > div > div > div > div { background-color: #28a745; }
     div[data-baseweb="select"] { font-size: 1.05rem !important; font-weight: bold !important; text-align: center !important; cursor: pointer; }
     
+    /* 플로팅 저장 버튼 고정 스타일 */
     div.st-key-floating_save {
         position: fixed;
         bottom: 40px;
@@ -315,50 +316,34 @@ elif menu == "📅 로그인/점수 입력":
                             st.markdown("<div style='border-bottom:1px solid #eee;'></div>", unsafe_allow_html=True)
 
             # ---------------------------------------------------------
-            # 신규 방 만들기 (과거 현장 복사 기능 포함)
+            # 신규 방 만들기
             # ---------------------------------------------------------
             elif st.session_state.admin_view == "create":
                 st.subheader("📝 새로운 현장 심사 방 만들기")
-                st.info("💡 과거 데이터를 입력하시려면, [템플릿 기준 선택]에서 과거 현장의 점수표를 그대로 복사해 올 수 있습니다!")
+                st.info("💡 사용할 템플릿(점수표) 버전을 선택하면, 해당 기준이 이 방에 영구적으로 박제(저장)됩니다.")
                 
-                res_df = load_results()
-                template_options = ["🌟 시스템 최신 마스터 점수표 적용"]
-                if not res_df.empty:
-                    for _, row in res_df.iterrows():
-                        template_options.append(f"📂 [{row['inspection_date']}] {row['현장명']} 점수표 복사")
+                versions = get_template_versions()
 
                 with st.form("create_room_form"):
-                    f1, f2, f3 = st.columns(3)
+                    f1, f2, f3, f4 = st.columns([2, 1, 1, 2])
                     site_name = f1.text_input("현장명")
                     site_type = f2.selectbox("분류", ["건축", "인프라", "플랜트"])
                     inspection_date = f3.date_input("점검 실시일", value=date.today())
+                    sel_template = f4.selectbox("사용할 템플릿 버전 선택", versions)
                     
                     st.divider()
-                    sel_template = st.selectbox("적용할 템플릿(점수표) 기준 선택", template_options)
                     
                     if st.form_submit_button("✅ 심사 방 생성하기", use_container_width=True):
                         if not site_name: st.error("현장명을 입력해주세요.")
                         else:
+                            t_df = load_template(sel_template).fillna("")
                             initial_details = {}
-                            if sel_template.startswith("🌟"):
-                                t_df = load_template().fillna("")
-                                for _, itm in t_df.iterrows():
-                                    initial_details[str(itm['id'])] = {
-                                        "score": None, "is_na": False, "max": int(itm['max_score']), "memo": "",
-                                        "category": str(itm['category']).strip(), "pdca": str(itm['pdca']).strip(),
-                                        "item_name": str(itm['item_name']).strip(), "penalty": str(itm['penalty']).strip()
-                                    }
-                            else:
-                                sel_idx = template_options.index(sel_template) - 1
-                                source_row = res_df.iloc[sel_idx]
-                                source_details = json.loads(source_row['details']) if source_row['details'] else {}
-                                
-                                for iid, data in source_details.items():
-                                    initial_details[iid] = {
-                                        "score": None, "is_na": False, "max": data.get('max', 0), "memo": "",
-                                        "category": data.get('category', ''), "pdca": data.get('pdca', ''),
-                                        "item_name": data.get('item_name', ''), "penalty": data.get('penalty', '')
-                                    }
+                            for _, itm in t_df.iterrows():
+                                initial_details[str(itm['id'])] = {
+                                    "score": None, "is_na": False, "max": int(itm['max_score']), "memo": "",
+                                    "category": str(itm['category']).strip(), "pdca": str(itm['pdca']).strip(),
+                                    "item_name": str(itm['item_name']).strip(), "penalty": str(itm['penalty']).strip()
+                                }
                             
                             payload = {
                                 "site_name": site_name, "site_type": site_type, "score": 0, 
@@ -367,7 +352,7 @@ elif menu == "📅 로그인/점수 입력":
                                 "updated_by": st.session_state.current_user, "updated_at": datetime.utcnow().isoformat()
                             }
                             supabase.table("audit_results").insert(payload).execute()
-                            st.session_state.flash_msg = "✅ 심사 방이 생성되었습니다!"
+                            st.session_state.flash_msg = f"✅ '{sel_template}' 버전으로 심사 방이 생성되었습니다!"
                             st.session_state.admin_view = "list"
                             st.rerun()
                 if st.button("⬅️ 취소하고 돌아가기"):
@@ -375,7 +360,7 @@ elif menu == "📅 로그인/점수 입력":
                     st.rerun()
 
             # ---------------------------------------------------------
-            # 심사 데이터 입력 및 템플릿 덮어쓰기 기능
+            # 심사 데이터 입력 (안전망(Fallback) 완벽 적용!)
             # ---------------------------------------------------------
             elif st.session_state.admin_view == "edit":
                 r = load_results()
@@ -413,7 +398,7 @@ elif menu == "📅 로그인/점수 입력":
                         st.session_state[f"sel_s_{iid}"] = prev.get('score', None)
                         st.session_state[f"txt_m_{iid}"] = prev.get('memo', "")
 
-                # [상단 툴바] 
+                # [상단 툴바] 원클릭 레포트 다운로드 버튼 (안전망 적용)
                 c_back, c_export, c_empty = st.columns([1.5, 2.5, 3])
                 with c_back:
                     if st.button("⬅️ 목록으로 돌아가기"):
@@ -425,7 +410,7 @@ elif menu == "📅 로그인/점수 입력":
                         iid = str(itm['id'])
                         s = st.session_state.get(f"sel_s_{iid}")
                         na = st.session_state.get(f"chk_na_{iid}")
-                        m = st.session_state.get(f"txt_m_{iid}")
+                        m = st.session_state.get(f"txt_m_{iid}", "")
                         
                         earn_str = "해당없음" if na else (s if s is not None else "미입력")
                         export_data.append({
@@ -433,24 +418,36 @@ elif menu == "📅 로그인/점수 입력":
                             "획득점수": earn_str, "감점사유 및 메모": m
                         })
                     df_export = pd.DataFrame(export_data)
+                    
                     output = io.BytesIO()
                     with pd.ExcelWriter(output, engine='openpyxl') as writer:
                         df_export.to_excel(writer, index=False, sheet_name='점검결과_세부내역')
                     excel_data = output.getvalue()
-                    st.download_button("📊 심사결과 레포트 다운로드 (Excel)", data=excel_data, file_name=f"{st.session_state.f_site_name}_보건관리_점검결과.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+                    
+                    # session_state에 없을 경우 DB 값(target)을 안전하게 가져오도록 Fallback 적용
+                    safe_site_name = st.session_state.get('f_site_name', target['현장명'])
+                    
+                    st.download_button("📊 심사결과 레포트 다운로드 (Excel)", data=excel_data, file_name=f"{safe_site_name}_보건관리_점검결과.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
 
-                st.subheader(f"📝 '{st.session_state.f_site_name}' 심사 진행")
+                # 현장명 표시 역시 Fallback 적용
+                st.subheader(f"📝 '{st.session_state.get('f_site_name', target['현장명'])}' 심사 진행")
                 
                 answered = sum([1 for _, itm in t_df.iterrows() if st.session_state.get(f"chk_na_{str(itm['id'])}", False) or st.session_state.get(f"sel_s_{str(itm['id'])}") is not None])
                 st.progress(answered/total_items if total_items > 0 else 0, text=f"📊 전체 작성 진행률: {answered} / {total_items} 완료")
                 
                 with st.expander("현장 기본 정보 (수정 필요 시 클릭)"):
                     f1, f2, f3 = st.columns(3)
-                    new_s_name = f1.text_input("현장명", key="f_site_name")
-                    new_s_type = f2.selectbox("분류", ["건축", "인프라", "플랜트"], key="f_site_type")
-                    new_s_date = f3.date_input("점검 실시일", key="f_insp_date")
-                
-                # [문제 해결] 빈 방 복구를 위한 템플릿 덮어쓰기 기능
+                    new_s_name = f1.text_input("현장명", value=st.session_state.get('f_site_name', target['현장명']), key="f_site_name_input")
+                    new_s_type = f2.selectbox("분류", ["건축", "인프라", "플랜트"], index=["건축", "인프라", "플랜트"].index(st.session_state.get('f_site_type', target['현장타입'])), key="f_site_type_input")
+                    
+                    # 날짜 형식 안전 보장
+                    insp_date_val = st.session_state.get('f_insp_date', target['inspection_date'])
+                    if isinstance(insp_date_val, str):
+                        insp_date_val = datetime.strptime(insp_date_val[:10], '%Y-%m-%d').date()
+                    new_s_date = f3.date_input("점검 실시일", value=insp_date_val, key="f_insp_date_input")
+
+                st.divider()
+
                 with st.expander("🛠️ 템플릿(점수표) 다시 불러오기 / 버전 변경"):
                     st.warning("⚠️ 주의: 새로운 템플릿을 불러오면 이 방의 기존 점수 데이터는 모두 초기화됩니다.")
                     all_versions = get_template_versions()
@@ -465,7 +462,7 @@ elif menu == "📅 로그인/점수 입력":
                                 "item_name": str(itm['item_name']).strip(), "penalty": str(itm['penalty']).strip()
                             }
                         supabase.table("audit_results").update({"details": json.dumps(new_details), "score": 0}).eq("id", st.session_state.edit_target_id).execute()
-                        st.session_state.active_form_id = None # 강제 리프레시
+                        st.session_state.active_form_id = None 
                         st.session_state.flash_msg = f"✅ '{sel_ver}' 템플릿으로 성공적으로 덮어씌웠습니다."
                         st.rerun()
 
@@ -513,17 +510,22 @@ elif menu == "📅 로그인/점수 입력":
                     
                     for _, itm in t_df.iterrows():
                         iid = str(itm['id'])
-                        cur_details[iid]["score"] = st.session_state[f"sel_s_{iid}"]
-                        cur_details[iid]["is_na"] = st.session_state[f"chk_na_{iid}"]
-                        cur_details[iid]["memo"] = st.session_state[f"txt_m_{iid}"]
+                        cur_details[iid]["score"] = st.session_state.get(f"sel_s_{iid}")
+                        cur_details[iid]["is_na"] = st.session_state.get(f"chk_na_{iid}", False)
+                        cur_details[iid]["memo"] = st.session_state.get(f"txt_m_{iid}", "")
                     
                     earn = sum([d['score'] for d in cur_details.values() if not d.get('is_na') and d.get('score') is not None])
                     poss = sum([d['max'] for d in cur_details.values() if not d.get('is_na') and d.get('score') is not None])
                     f_sc = round((earn/poss*100) if poss>0 else 0, 1)
                     
+                    save_date = st.session_state.get('f_insp_date_input', date.today())
+                    if isinstance(save_date, date): save_date = save_date.isoformat()
+
                     payload = {
-                        "site_name": st.session_state.f_site_name, "site_type": st.session_state.f_site_type, "score": f_sc, 
-                        "inspection_date": st.session_state.f_insp_date.isoformat(),
+                        "site_name": st.session_state.get('f_site_name_input', target['현장명']), 
+                        "site_type": st.session_state.get('f_site_type_input', target['현장타입']), 
+                        "score": f_sc, 
+                        "inspection_date": save_date,
                         "details": json.dumps(cur_details), "updated_by": st.session_state.current_user, 
                         "updated_at": datetime.utcnow().isoformat()
                     }
@@ -535,7 +537,7 @@ elif menu == "📅 로그인/점수 입력":
                     st.rerun()
 
         # ---------------------------------------------------------
-        # 마스터 (템플릿) 설정 탭 (버전 관리 추가!)
+        # 마스터 (템플릿) 설정 탭
         # ---------------------------------------------------------
         with t_tab:
             st.subheader("📥 엑셀로 신규 템플릿 버전 업로드")
