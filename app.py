@@ -296,13 +296,12 @@ elif menu == "📅 로그인/점수 입력":
                             st.markdown("<div style='border-bottom:1px solid #eee;'></div>", unsafe_allow_html=True)
 
             # ---------------------------------------------------------
-            # 신규 방 만들기 (타임머신 템플릿 복제 기능 추가!)
+            # 신규 방 만들기
             # ---------------------------------------------------------
             elif st.session_state.admin_view == "create":
                 st.subheader("📝 새로운 현장 심사 방 만들기")
                 st.info("💡 과거 데이터를 입력하시려면, [템플릿 기준 선택]에서 과거 현장의 점수표를 그대로 복사해 올 수 있습니다!")
                 
-                # 과거 템플릿 목록 만들기
                 res_df = load_results()
                 template_options = ["🌟 시스템 최신 마스터 점수표 적용"]
                 if not res_df.empty:
@@ -324,7 +323,6 @@ elif menu == "📅 로그인/점수 입력":
                             initial_details = {}
                             
                             if sel_template.startswith("🌟"):
-                                # 1. 최신 마스터 템플릿 박제
                                 t_df = load_template().fillna("")
                                 for _, itm in t_df.iterrows():
                                     initial_details[str(itm['id'])] = {
@@ -333,7 +331,6 @@ elif menu == "📅 로그인/점수 입력":
                                         "item_name": str(itm['item_name']).strip(), "penalty": str(itm['penalty']).strip()
                                     }
                             else:
-                                # 2. 과거 현장의 템플릿 스냅샷 복제 (점수와 메모만 초기화)
                                 sel_idx = template_options.index(sel_template) - 1
                                 source_row = res_df.iloc[sel_idx]
                                 source_details = json.loads(source_row['details']) if source_row['details'] else {}
@@ -360,25 +357,47 @@ elif menu == "📅 로그인/점수 입력":
                     st.rerun()
 
             # ---------------------------------------------------------
-            # 심사 데이터 입력 (자동 엑셀 레포트 다운로드 추가!)
+            # 심사 데이터 입력 (에러 방어 로직 추가)
             # ---------------------------------------------------------
             elif st.session_state.admin_view == "edit":
                 r = load_results()
                 target = r[r['id'] == st.session_state.edit_target_id].iloc[0]
                 cur_details = json.loads(target['details']) if target['details'] else {}
 
+                # [핵심 방어] 과거 껍데기 방을 위한 자동 템플릿 마이그레이션
+                is_legacy = False
+                if cur_details:
+                    first_key = list(cur_details.keys())[0]
+                    if 'item_name' not in cur_details[first_key]: is_legacy = True
+                
+                if not cur_details or is_legacy:
+                    t_df_master = load_template().fillna("")
+                    for _, itm in t_df_master.iterrows():
+                        iid = str(itm['id'])
+                        if iid not in cur_details: cur_details[iid] = {}
+                        cur_details[iid].update({
+                            "max": int(itm['max_score']), "category": str(itm['category']).strip(),
+                            "pdca": str(itm['pdca']).strip(), "item_name": str(itm['item_name']).strip(),
+                            "penalty": str(itm['penalty']).strip()
+                        })
+
                 t_data = []
                 for iid, data in cur_details.items():
                     t_data.append({
-                        "id": int(iid), "category": data.get("category", ""), "pdca": data.get("pdca", ""),
-                        "item_name": data.get("item_name", ""), "penalty": data.get("penalty", ""),
+                        "id": int(iid), "category": data.get("category", "기타"), "pdca": data.get("pdca", ""),
+                        "item_name": data.get("item_name", "이름 없음"), "penalty": data.get("penalty", ""),
                         "max_score": data.get("max", 0)
                     })
                 t_df = pd.DataFrame(t_data)
                 
+                # [핵심 방어] st.tabs() 에러 방지를 위해 카테고리가 비어있지 않도록 보장
                 current_cats = []
-                for c in t_df['category'].unique():
-                    if c: current_cats.append(c)
+                if not t_df.empty and 'category' in t_df.columns:
+                    for c in t_df['category'].unique():
+                        if c: current_cats.append(c)
+                
+                if not current_cats:
+                    current_cats = ["항목 없음"]
 
                 total_items = len(t_df)
 
@@ -396,14 +415,12 @@ elif menu == "📅 로그인/점수 입력":
                         st.session_state[f"sel_s_{iid}"] = prev.get('score', None)
                         st.session_state[f"txt_m_{iid}"] = prev.get('memo', "")
 
-                # 상단 툴바 (결과 레포트 다운로드 추가)
                 c_back, c_export, c_empty = st.columns([1.5, 2.5, 3])
                 with c_back:
                     if st.button("⬅️ 목록으로 돌아가기"):
                         st.session_state.admin_view, st.session_state.active_form_id = "list", None
                         st.rerun()
                 with c_export:
-                    # 엑셀 레포트 실시간 생성 로직
                     export_data = []
                     for _, itm in t_df.iterrows():
                         iid = str(itm['id'])
@@ -441,6 +458,10 @@ elif menu == "📅 로그인/점수 입력":
                 tabs = st.tabs(current_cats)
                 for i, cat in enumerate(current_cats):
                     with tabs[i]:
+                        if cat == "항목 없음":
+                            st.warning("⚠️ 이 심사 방에는 저장된 점검 항목이 없습니다. (과거에 생성된 빈 방이거나 마스터 템플릿이 비어있습니다.)")
+                            continue
+                            
                         items = t_df[t_df['category'] == cat]
                         if not items.empty:
                             if st.button(f"🚫 '{cat.split('.')[1].strip() if len(cat.split('.'))>1 else cat}' 파트 전체 '해당없음' 처리", key=f"btn_all_na_{i}"):
