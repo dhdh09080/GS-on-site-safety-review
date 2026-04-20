@@ -85,12 +85,6 @@ def load_results():
         else: df['inspection_date'] = df['inspection_date'].fillna(df['created_at'].str[:10])
     return df
 
-main_categories = [
-    "1. 방침 수립, 조직상황, 성과평가, 내부심사", "2. 인력 및 예산", "3. 위험성평가 및 이행",
-    "4. 종사자 의견 청취 및 개선 조치", "5. 안전보건교육", "6. 비상 시 대응 계획 및 사고관리",
-    "7. 계획 수립", "8. 회의 및 점검", "9. 장비 안전관리 (건기법 포함)", "10. 보건관리"
-]
-
 st.sidebar.title("🏗️ GS건설 내부심사")
 menu = st.sidebar.radio("메뉴 이동", ["📊 통합 대시보드", "📅 로그인/점수 입력"])
 
@@ -101,7 +95,6 @@ if menu == "📊 통합 대시보드":
     st.title("🏗️ GS건설 현장 내부심사 통합 대시보드")
     
     df = load_results()
-    template_df = load_template()
     
     valid_rows = []
     if not df.empty:
@@ -114,8 +107,6 @@ if menu == "📊 통합 대시보드":
     
     if dash_df.empty:
         st.info("💡 아직 점수가 입력된 현장 심사 데이터가 없습니다. 게시판에서 심사를 진행해주세요!")
-    elif template_df.empty:
-        st.warning("💡 기준이 될 템플릿(점수표) 데이터가 없습니다. 마스터 설정에서 엑셀을 업로드해주세요.")
     else:
         r1_c1, r1_c2 = st.columns(2)
         with r1_c1:
@@ -145,12 +136,11 @@ if menu == "📊 통합 대시보드":
         for _, row in dash_df.iterrows():
             details = json.loads(row['details']) if isinstance(row['details'], str) else row['details']
             for item_id, val in details.items():
-                t_info = template_df[template_df['id'].astype(str) == str(item_id)]
-                if not t_info.empty and isinstance(val, dict):
-                    if not val.get('is_na', False) and val.get('score') is not None:
+                if isinstance(val, dict):
+                    if not val.get('is_na', False) and val.get('score') is not None and 'item_name' in val:
                         analysis_data.append({
-                            'site_type': row['현장타입'], 'pdca': t_info.iloc[0]['pdca'],
-                            'category': t_info.iloc[0]['category'], 'item_name': t_info.iloc[0]['item_name'],
+                            'site_type': row['현장타입'], 'pdca': val.get('pdca', '-'),
+                            'category': val.get('category', '-'), 'item_name': val.get('item_name', '-'),
                             'earned': val['score'], 'max': val['max']
                         })
         a_df = pd.DataFrame(analysis_data)
@@ -198,13 +188,12 @@ if menu == "📊 통합 대시보드":
 
             st.markdown("### 📋 대분류 항목별 사업부 점수 비교")
             cat_stats = a_df.groupby(['category', 'site_type']).apply(calc_score_safe).unstack().fillna(0)
-            ordered_cats = [cat.strip() for cat in main_categories if cat.strip() in cat_stats.index]
-            cat_stats = cat_stats.reindex(ordered_cats)
+            cat_stats = cat_stats.sort_index()
             cat_stats.insert(0, '평균 점수', cat_stats.mean(axis=1).round(1))
             st.dataframe(cat_stats, use_container_width=True)
 
 # ==========================================
-# [페이지 2] 심사 게시판
+# [페이지 2] 로그인 / 점수 입력
 # ==========================================
 elif menu == "📅 로그인/점수 입력":
     if not st.session_state.logged_in:
@@ -229,6 +218,9 @@ elif menu == "📅 로그인/점수 입력":
         m_tab, t_tab = st.tabs(["📝 리스트 관리", "⚙️ 점수표(마스터) 설정"])
         
         with m_tab:
+            # ---------------------------------------------------------
+            # 게시판 목록
+            # ---------------------------------------------------------
             if st.session_state.admin_view == "list":
                 if st.session_state.get('flash_msg'):
                     st.info(st.session_state.flash_msg)
@@ -241,7 +233,6 @@ elif menu == "📅 로그인/점수 입력":
                     st.rerun()
                 
                 res_df = load_results()
-                t_df = load_template()
                 
                 if not res_df.empty:
                     if sq: res_df = res_df[res_df['현장명'].str.contains(sq)]
@@ -251,27 +242,25 @@ elif menu == "📅 로그인/점수 입력":
                         details_dict = json.loads(row['details']) if row['details'] else {}
                         
                         missing_parts = []
-                        total_q = len(t_df)
+                        total_q = len(details_dict)
                         answered_q = 0
                         
-                        if not t_df.empty:
-                            for _, itm in t_df.iterrows():
-                                iid = str(itm['id'])
-                                data = details_dict.get(iid)
-                                if data and (data.get('is_na') or data.get('score') is not None):
-                                    answered_q += 1
-                            
-                            for cat in main_categories:
-                                cat_items = t_df[t_df['category'] == cat.strip()]
-                                if not cat_items.empty:
-                                    cat_answered = True
-                                    for _, ci in cat_items.iterrows():
-                                        cid = str(ci['id'])
-                                        if not details_dict.get(cid) or (not details_dict[cid].get('is_na') and details_dict[cid].get('score') is None):
-                                            cat_answered = False
-                                            break
-                                    if not cat_answered:
-                                        missing_parts.append(cat.split('.')[1].strip() if len(cat.split('.')) > 1 else cat.strip())
+                        cats = set()
+                        for iid, data in details_dict.items():
+                            cats.add(data.get('category', ''))
+                            if data.get('is_na') or data.get('score') is not None:
+                                answered_q += 1
+                        
+                        for cat in cats:
+                            if not cat: continue
+                            cat_answered = True
+                            for iid, data in details_dict.items():
+                                if data.get('category') == cat:
+                                    if not data.get('is_na') and data.get('score') is None:
+                                        cat_answered = False
+                                        break
+                            if not cat_answered:
+                                missing_parts.append(cat.split('.')[1].strip() if len(cat.split('.')) > 1 else cat.strip())
 
                         progress_pct = int((answered_q / total_q) * 100) if total_q > 0 else 0
                         sc = row['최종점수']
@@ -306,21 +295,60 @@ elif menu == "📅 로그인/점수 입력":
                                     st.rerun()
                             st.markdown("<div style='border-bottom:1px solid #eee;'></div>", unsafe_allow_html=True)
 
+            # ---------------------------------------------------------
+            # 신규 방 만들기 (타임머신 템플릿 복제 기능 추가!)
+            # ---------------------------------------------------------
             elif st.session_state.admin_view == "create":
                 st.subheader("📝 새로운 현장 심사 방 만들기")
-                st.info("💡 현장 기본 정보를 먼저 등록합니다. 방이 만들어진 후 목록에서 접속하여 점수를 입력하세요.")
+                st.info("💡 과거 데이터를 입력하시려면, [템플릿 기준 선택]에서 과거 현장의 점수표를 그대로 복사해 올 수 있습니다!")
+                
+                # 과거 템플릿 목록 만들기
+                res_df = load_results()
+                template_options = ["🌟 시스템 최신 마스터 점수표 적용"]
+                if not res_df.empty:
+                    for _, row in res_df.iterrows():
+                        template_options.append(f"📂 [{row['inspection_date']}] {row['현장명']} 점수표 복사")
+
                 with st.form("create_room_form"):
                     f1, f2, f3 = st.columns(3)
                     site_name = f1.text_input("현장명")
                     site_type = f2.selectbox("분류", ["건축", "인프라", "플랜트"])
                     inspection_date = f3.date_input("점검 실시일", value=date.today())
+                    
+                    st.divider()
+                    sel_template = st.selectbox("적용할 템플릿(점수표) 기준 선택", template_options)
+                    
                     if st.form_submit_button("✅ 심사 방 생성하기", use_container_width=True):
                         if not site_name: st.error("현장명을 입력해주세요.")
                         else:
+                            initial_details = {}
+                            
+                            if sel_template.startswith("🌟"):
+                                # 1. 최신 마스터 템플릿 박제
+                                t_df = load_template().fillna("")
+                                for _, itm in t_df.iterrows():
+                                    initial_details[str(itm['id'])] = {
+                                        "score": None, "is_na": False, "max": int(itm['max_score']), "memo": "",
+                                        "category": str(itm['category']).strip(), "pdca": str(itm['pdca']).strip(),
+                                        "item_name": str(itm['item_name']).strip(), "penalty": str(itm['penalty']).strip()
+                                    }
+                            else:
+                                # 2. 과거 현장의 템플릿 스냅샷 복제 (점수와 메모만 초기화)
+                                sel_idx = template_options.index(sel_template) - 1
+                                source_row = res_df.iloc[sel_idx]
+                                source_details = json.loads(source_row['details']) if source_row['details'] else {}
+                                
+                                for iid, data in source_details.items():
+                                    initial_details[iid] = {
+                                        "score": None, "is_na": False, "max": data.get('max', 0), "memo": "",
+                                        "category": data.get('category', ''), "pdca": data.get('pdca', ''),
+                                        "item_name": data.get('item_name', ''), "penalty": data.get('penalty', '')
+                                    }
+                            
                             payload = {
                                 "site_name": site_name, "site_type": site_type, "score": 0, 
                                 "inspection_date": inspection_date.isoformat(),
-                                "details": json.dumps({}), "created_by": st.session_state.current_user,
+                                "details": json.dumps(initial_details), "created_by": st.session_state.current_user,
                                 "updated_by": st.session_state.current_user, "updated_at": datetime.utcnow().isoformat()
                             }
                             supabase.table("audit_results").insert(payload).execute()
@@ -331,37 +359,71 @@ elif menu == "📅 로그인/점수 입력":
                     st.session_state.admin_view = "list"
                     st.rerun()
 
+            # ---------------------------------------------------------
+            # 심사 데이터 입력 (자동 엑셀 레포트 다운로드 추가!)
+            # ---------------------------------------------------------
             elif st.session_state.admin_view == "edit":
-                t_df = load_template().fillna("")
-                t_df['category'] = t_df['category'].astype(str).str.strip()
+                r = load_results()
+                target = r[r['id'] == st.session_state.edit_target_id].iloc[0]
+                cur_details = json.loads(target['details']) if target['details'] else {}
+
+                t_data = []
+                for iid, data in cur_details.items():
+                    t_data.append({
+                        "id": int(iid), "category": data.get("category", ""), "pdca": data.get("pdca", ""),
+                        "item_name": data.get("item_name", ""), "penalty": data.get("penalty", ""),
+                        "max_score": data.get("max", 0)
+                    })
+                t_df = pd.DataFrame(t_data)
+                
+                current_cats = []
+                for c in t_df['category'].unique():
+                    if c: current_cats.append(c)
+
                 total_items = len(t_df)
 
                 target_id_str = f"edit_{st.session_state.edit_target_id}"
                 if st.session_state.get('active_form_id') != target_id_str:
                     st.session_state.active_form_id = target_id_str
-                    r = load_results()
-                    target = r[r['id'] == st.session_state.edit_target_id].iloc[0]
                     st.session_state['f_site_name'] = target['현장명']
                     st.session_state['f_site_type'] = target['현장타입']
                     st.session_state['f_insp_date'] = datetime.strptime(target['inspection_date'], '%Y-%m-%d').date() if target.get('inspection_date') else date.today()
                     
-                    cur_details = json.loads(target['details']) if target['details'] else {}
                     for _, itm in t_df.iterrows():
                         iid = str(itm['id'])
-                        prev = cur_details.get(iid, None)
-                        if prev is None:
-                            st.session_state[f"chk_na_{iid}"] = False
-                            st.session_state[f"sel_s_{iid}"] = None
-                            st.session_state[f"txt_m_{iid}"] = ""
-                        else:
-                            st.session_state[f"chk_na_{iid}"] = prev.get('is_na', False)
-                            st.session_state[f"sel_s_{iid}"] = prev.get('score', None)
-                            st.session_state[f"txt_m_{iid}"] = prev.get('memo', "")
+                        prev = cur_details.get(iid, {})
+                        st.session_state[f"chk_na_{iid}"] = prev.get('is_na', False)
+                        st.session_state[f"sel_s_{iid}"] = prev.get('score', None)
+                        st.session_state[f"txt_m_{iid}"] = prev.get('memo', "")
 
-                c_back, c_empty = st.columns([1, 4])
-                if c_back.button("⬅️ 목록으로 돌아가기"):
-                    st.session_state.admin_view, st.session_state.active_form_id = "list", None
-                    st.rerun()
+                # 상단 툴바 (결과 레포트 다운로드 추가)
+                c_back, c_export, c_empty = st.columns([1.5, 2.5, 3])
+                with c_back:
+                    if st.button("⬅️ 목록으로 돌아가기"):
+                        st.session_state.admin_view, st.session_state.active_form_id = "list", None
+                        st.rerun()
+                with c_export:
+                    # 엑셀 레포트 실시간 생성 로직
+                    export_data = []
+                    for _, itm in t_df.iterrows():
+                        iid = str(itm['id'])
+                        s = st.session_state.get(f"sel_s_{iid}")
+                        na = st.session_state.get(f"chk_na_{iid}")
+                        m = st.session_state.get(f"txt_m_{iid}")
+                        
+                        earn_str = "해당없음" if na else (s if s is not None else "미입력")
+                        export_data.append({
+                            "대분류": itm['category'], "점검사항": itm['item_name'], "배점": itm['max_score'],
+                            "획득점수": earn_str, "감점사유 및 메모": m
+                        })
+                    df_export = pd.DataFrame(export_data)
+                    
+                    output = io.BytesIO()
+                    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                        df_export.to_excel(writer, index=False, sheet_name='점검결과_세부내역')
+                    excel_data = output.getvalue()
+                    
+                    st.download_button("📊 심사결과 레포트 다운로드 (Excel)", data=excel_data, file_name=f"{st.session_state.f_site_name}_보건관리_점검결과.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
 
                 st.subheader(f"📝 '{st.session_state.f_site_name}' 심사 진행")
                 
@@ -376,13 +438,11 @@ elif menu == "📅 로그인/점수 입력":
 
                 st.divider()
 
-                tabs = st.tabs(main_categories)
-                for i, cat in enumerate(main_categories):
+                tabs = st.tabs(current_cats)
+                for i, cat in enumerate(current_cats):
                     with tabs[i]:
-                        items = t_df[t_df['category'] == cat.strip()]
-                        if items.empty:
-                            st.info("이 분류에 등록된 질문지가 없습니다.")
-                        else:
+                        items = t_df[t_df['category'] == cat]
+                        if not items.empty:
                             if st.button(f"🚫 '{cat.split('.')[1].strip() if len(cat.split('.'))>1 else cat}' 파트 전체 '해당없음' 처리", key=f"btn_all_na_{i}"):
                                 for _, itm in items.iterrows():
                                     iid = str(itm['id'])
@@ -414,19 +474,20 @@ elif menu == "📅 로그인/점수 입력":
                 if st.button("💾 데이터 저장하기 (중간 저장 가능)", type="primary", use_container_width=True, key="floating_save"):
                     unanswered = [itm['item_name'] for _, itm in t_df.iterrows() if not st.session_state.get(f"chk_na_{str(itm['id'])}") and st.session_state.get(f"sel_s_{str(itm['id'])}") is None]
                     
-                    res_input = {}
                     for _, itm in t_df.iterrows():
                         iid = str(itm['id'])
-                        res_input[iid] = {"score": st.session_state[f"sel_s_{iid}"], "is_na": st.session_state[f"chk_na_{iid}"], "max": int(itm['max_score']), "memo": st.session_state[f"txt_m_{iid}"]}
+                        cur_details[iid]["score"] = st.session_state[f"sel_s_{iid}"]
+                        cur_details[iid]["is_na"] = st.session_state[f"chk_na_{iid}"]
+                        cur_details[iid]["memo"] = st.session_state[f"txt_m_{iid}"]
                     
-                    earn = sum([d['score'] for d in res_input.values() if not d['is_na'] and d['score'] is not None])
-                    poss = sum([d['max'] for d in res_input.values() if not d['is_na'] and d['score'] is not None])
+                    earn = sum([d['score'] for d in cur_details.values() if not d.get('is_na') and d.get('score') is not None])
+                    poss = sum([d['max'] for d in cur_details.values() if not d.get('is_na') and d.get('score') is not None])
                     f_sc = round((earn/poss*100) if poss>0 else 0, 1)
                     
                     payload = {
                         "site_name": st.session_state.f_site_name, "site_type": st.session_state.f_site_type, "score": f_sc, 
                         "inspection_date": st.session_state.f_insp_date.isoformat(),
-                        "details": json.dumps(res_input), "updated_by": st.session_state.current_user, 
+                        "details": json.dumps(cur_details), "updated_by": st.session_state.current_user, 
                         "updated_at": datetime.utcnow().isoformat()
                     }
                     supabase.table("audit_results").update(payload).eq("id", st.session_state.edit_target_id).execute()
@@ -437,12 +498,12 @@ elif menu == "📅 로그인/점수 입력":
                     st.rerun()
 
         # ---------------------------------------------------------
-        # 마스터 (템플릿) 설정 탭 (엑셀 다운로드 추가)
+        # 마스터 (템플릿) 설정 탭
         # ---------------------------------------------------------
         with t_tab:
             st.subheader("📥 엑셀로 질문지(템플릿) 일괄 업로드")
             up = st.file_uploader("양식에 맞춘 엑셀 파일 선택", type=['xlsx'])
-            if up and st.button("🚀 이 데이터로 점수표 덮어쓰기"):
+            if up and st.button("🚀 이 데이터로 점수표 덮어쓰기 (기존 심사 방은 영향 없음)"):
                 df_up = pd.read_excel(up).fillna("")
                 recs = []
                 for _, r in df_up.iterrows():
@@ -451,7 +512,7 @@ elif menu == "📅 로그인/점수 입력":
                     recs.append({"category": str(r['대분류']).strip(), "sub_category": str(r.get('분류', '')).strip(), "pdca": str(r.get('PDCA', '')).strip(), "item_name": str(r['점검사항']).strip(), "penalty": str(r.get('과태료', '')).strip(), "max_score": max_s})
                 supabase.table("checklist_template").delete().gt("id", 0).execute()
                 supabase.table("checklist_template").insert(recs).execute()
-                st.success("✅ 업데이트 완료!")
+                st.success("✅ 업데이트 완료! 지금부터 생성되는 신규 심사 방은 이 템플릿을 따릅니다.")
                 st.rerun()
             
             st.divider()
@@ -459,11 +520,9 @@ elif menu == "📅 로그인/점수 입력":
             tmp_df = load_template()
             if not tmp_df.empty:
                 tmp_df = tmp_df[['category', 'sub_category', 'pdca', 'item_name', 'penalty', 'max_score']]
-                edt_df = st.data_editor(tmp_df, num_rows="dynamic", use_container_width=True, column_config={"category": st.column_config.SelectboxColumn("대분류", options=main_categories, required=True), "max_score": st.column_config.NumberColumn("배점", required=True)})
+                edt_df = st.data_editor(tmp_df, num_rows="dynamic", use_container_width=True, column_config={"category": st.column_config.TextColumn("대분류", required=True), "max_score": st.column_config.NumberColumn("배점", required=True)})
                 
-                # 버튼 가로 배치
                 btn_col1, btn_col2 = st.columns(2)
-                
                 with btn_col1:
                     if st.button("💾 변경사항 저장", type="primary", use_container_width=True):
                         recs = edt_df.fillna("").to_dict('records')
@@ -472,25 +531,12 @@ elif menu == "📅 로그인/점수 입력":
                         supabase.table("checklist_template").insert(recs).execute()
                         st.success("✅ 저장 완료.")
                         st.rerun()
-                
                 with btn_col2:
-                    # 다운로드할 때 엑셀 헤더를 한글로 예쁘게 변환
-                    export_df = edt_df.rename(columns={
-                        "category": "대분류", "sub_category": "분류", "pdca": "PDCA", 
-                        "item_name": "점검사항", "penalty": "과태료", "max_score": "배점"
-                    })
-                    
+                    export_df = edt_df.rename(columns={"category": "대분류", "sub_category": "분류", "pdca": "PDCA", "item_name": "점검사항", "penalty": "과태료", "max_score": "배점"})
                     output = io.BytesIO()
                     with pd.ExcelWriter(output, engine='openpyxl') as writer:
                         export_df.to_excel(writer, index=False, sheet_name='점검템플릿')
                     excel_data = output.getvalue()
-                    
-                    st.download_button(
-                        label="📥 현재 점수표 엑셀로 다운로드",
-                        data=excel_data,
-                        file_name=f"GS건설_보건관리_점검표양식_{date.today().strftime('%Y%m%d')}.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        use_container_width=True
-                    )
+                    st.download_button(label="📥 현재 점수표 엑셀로 다운로드", data=excel_data, file_name=f"GS건설_보건관리_점검표양식_{date.today().strftime('%Y%m%d')}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
             else:
                 st.info("현재 등록된 템플릿이 없습니다. 엑셀을 업로드해주세요.")
