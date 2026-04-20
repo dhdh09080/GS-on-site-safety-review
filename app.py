@@ -95,7 +95,7 @@ st.sidebar.title("🏗️ GS건설 내부심사")
 menu = st.sidebar.radio("메뉴 이동", ["📊 통합 대시보드", "📅 로그인/점수 입력"])
 
 # ==========================================
-# [페이지 1] 통합 대시보드 (오류 철통 방어 적용)
+# [페이지 1] 통합 대시보드
 # ==========================================
 if menu == "📊 통합 대시보드":
     st.title("🏗️ GS건설 현장 내부심사 통합 대시보드")
@@ -103,7 +103,6 @@ if menu == "📊 통합 대시보드":
     df = load_results()
     template_df = load_template()
     
-    # [방어 1] 내용물이 있는 유효한 현장 데이터만 필터링 (빈 껍데기 방 제외)
     valid_rows = []
     if not df.empty:
         for _, row in df.iterrows():
@@ -118,7 +117,6 @@ if menu == "📊 통합 대시보드":
     elif template_df.empty:
         st.warning("💡 기준이 될 템플릿(점수표) 데이터가 없습니다. 마스터 설정에서 엑셀을 업로드해주세요.")
     else:
-        # 1. 랭킹
         r1_c1, r1_c2 = st.columns(2)
         with r1_c1:
             st.markdown("#### 🏆 상위 3위 현장")
@@ -128,7 +126,6 @@ if menu == "📊 통합 대시보드":
             st.table(dash_df.nsmallest(3, '최종점수')[['현장명', '현장타입', '최종점수']].sort_values('최종점수').reset_index(drop=True))
         st.divider()
 
-        # 2. 분포도
         st.markdown("### 📍 현장 점수 분포 현황")
         r2_c1, r2_c2 = st.columns([3, 2])
         with r2_c1:
@@ -144,7 +141,6 @@ if menu == "📊 통합 대시보드":
             st.plotly_chart(fig_scatter, use_container_width=True)
         st.divider()
 
-        # 세부 분석 데이터 파싱
         analysis_data = []
         for _, row in dash_df.iterrows():
             details = json.loads(row['details']) if isinstance(row['details'], str) else row['details']
@@ -162,7 +158,6 @@ if menu == "📊 통합 대시보드":
         if a_df.empty:
             st.info("💡 아직 세부 문항 점수가 채점된 현장이 없습니다.")
         else:
-            # [방어 2] ZeroDivisionError 방지 안전 함수
             def calc_score_safe(x):
                 tm = x['max'].sum()
                 return round((x['earned'].sum() / tm) * 100, 1) if tm > 0 else 0
@@ -171,7 +166,6 @@ if menu == "📊 통합 대시보드":
                 tm = x['max'].sum()
                 return pd.Series({'achieve_rate': round((x['earned'].sum() / tm) * 100, 1) if tm > 0 else 0})
 
-            # 3. 취약항목 및 트렌드
             r3_c1, r3_c2 = st.columns(2)
             with r3_c1:
                 st.markdown("### 🚨 전사 취약 항목 TOP 5")
@@ -189,7 +183,6 @@ if menu == "📊 통합 대시보드":
                 st.plotly_chart(fig_trend, use_container_width=True)
             st.divider()
 
-            # 4. 사업부/PDCA 통계
             st.markdown("### 📊 사업부별 / PDCA별 평균 점수")
             pdca_stats = a_df.groupby(['site_type', 'pdca']).apply(calc_score_safe).unstack().fillna(0)
             overall_site_avg = dash_df.groupby('현장타입')['최종점수'].mean().round(1)
@@ -203,7 +196,6 @@ if menu == "📊 통합 대시보드":
                 st.plotly_chart(fig_radar, use_container_width=True)
             st.divider()
 
-            # 5. 대분류 통계
             st.markdown("### 📋 대분류 항목별 사업부 점수 비교")
             cat_stats = a_df.groupby(['category', 'site_type']).apply(calc_score_safe).unstack().fillna(0)
             ordered_cats = [cat.strip() for cat in main_categories if cat.strip() in cat_stats.index]
@@ -237,9 +229,6 @@ elif menu == "📅 로그인/점수 입력":
         m_tab, t_tab = st.tabs(["📝 리스트 관리", "⚙️ 점수표(마스터) 설정"])
         
         with m_tab:
-            # ---------------------------------------------------------
-            # 게시판 목록
-            # ---------------------------------------------------------
             if st.session_state.admin_view == "list":
                 if st.session_state.get('flash_msg'):
                     st.info(st.session_state.flash_msg)
@@ -317,9 +306,6 @@ elif menu == "📅 로그인/점수 입력":
                                     st.rerun()
                             st.markdown("<div style='border-bottom:1px solid #eee;'></div>", unsafe_allow_html=True)
 
-            # ---------------------------------------------------------
-            # 신규 심사 등록 (방 만들기)
-            # ---------------------------------------------------------
             elif st.session_state.admin_view == "create":
                 st.subheader("📝 새로운 현장 심사 방 만들기")
                 st.info("💡 현장 기본 정보를 먼저 등록합니다. 방이 만들어진 후 목록에서 접속하여 점수를 입력하세요.")
@@ -345,9 +331,6 @@ elif menu == "📅 로그인/점수 입력":
                     st.session_state.admin_view = "list"
                     st.rerun()
 
-            # ---------------------------------------------------------
-            # 심사 데이터 입력 (Live 폼)
-            # ---------------------------------------------------------
             elif st.session_state.admin_view == "edit":
                 t_df = load_template().fillna("")
                 t_df['category'] = t_df['category'].astype(str).str.strip()
@@ -454,7 +437,7 @@ elif menu == "📅 로그인/점수 입력":
                     st.rerun()
 
         # ---------------------------------------------------------
-        # 마스터 (템플릿) 설정 탭 
+        # 마스터 (템플릿) 설정 탭 (엑셀 다운로드 추가)
         # ---------------------------------------------------------
         with t_tab:
             st.subheader("📥 엑셀로 질문지(템플릿) 일괄 업로드")
@@ -472,15 +455,42 @@ elif menu == "📅 로그인/점수 입력":
                 st.rerun()
             
             st.divider()
-            st.subheader("⚙️ 웹에서 직접 수정")
+            st.subheader("⚙️ 웹에서 직접 수정 및 다운로드")
             tmp_df = load_template()
             if not tmp_df.empty:
                 tmp_df = tmp_df[['category', 'sub_category', 'pdca', 'item_name', 'penalty', 'max_score']]
                 edt_df = st.data_editor(tmp_df, num_rows="dynamic", use_container_width=True, column_config={"category": st.column_config.SelectboxColumn("대분류", options=main_categories, required=True), "max_score": st.column_config.NumberColumn("배점", required=True)})
-                if st.button("💾 변경사항 저장"):
-                    recs = edt_df.fillna("").to_dict('records')
-                    for rec in recs: rec['category'] = str(rec['category']).strip()
-                    supabase.table("checklist_template").delete().gt("id", 0).execute()
-                    supabase.table("checklist_template").insert(recs).execute()
-                    st.success("✅ 저장 완료.")
-                    st.rerun()
+                
+                # 버튼 가로 배치
+                btn_col1, btn_col2 = st.columns(2)
+                
+                with btn_col1:
+                    if st.button("💾 변경사항 저장", type="primary", use_container_width=True):
+                        recs = edt_df.fillna("").to_dict('records')
+                        for rec in recs: rec['category'] = str(rec['category']).strip()
+                        supabase.table("checklist_template").delete().gt("id", 0).execute()
+                        supabase.table("checklist_template").insert(recs).execute()
+                        st.success("✅ 저장 완료.")
+                        st.rerun()
+                
+                with btn_col2:
+                    # 다운로드할 때 엑셀 헤더를 한글로 예쁘게 변환
+                    export_df = edt_df.rename(columns={
+                        "category": "대분류", "sub_category": "분류", "pdca": "PDCA", 
+                        "item_name": "점검사항", "penalty": "과태료", "max_score": "배점"
+                    })
+                    
+                    output = io.BytesIO()
+                    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                        export_df.to_excel(writer, index=False, sheet_name='점검템플릿')
+                    excel_data = output.getvalue()
+                    
+                    st.download_button(
+                        label="📥 현재 점수표 엑셀로 다운로드",
+                        data=excel_data,
+                        file_name=f"GS건설_보건관리_점검표양식_{date.today().strftime('%Y%m%d')}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True
+                    )
+            else:
+                st.info("현재 등록된 템플릿이 없습니다. 엑셀을 업로드해주세요.")
